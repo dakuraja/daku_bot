@@ -11,12 +11,15 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
+# 🔹 NEW: Supabase client import
+from supabase import create_client, Client
+
 # ---------------- PATH / ENV SETUP ----------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-QUESTIONS_FILE = os.path.join(BASE_DIR, "questions.json")
+QUESTIONS_FILE = os.path.join(BASE_DIR, "questions.json")   # (ab actual file use nahi hogi, sirf naam bacha hai)
 LEADERBOARD_FILE = os.path.join(BASE_DIR, "leaderboard.json")
 SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
-RESULTS_HISTORY_FILE = os.path.join(BASE_DIR, "results_history.json")  # time-based leaderboard ke liye
+RESULTS_HISTORY_FILE = os.path.join(BASE_DIR, "results.json")  # time-based leaderboard ke liye
 
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 PDF_FONT_PATH = os.path.join(FONTS_DIR, "NotoSansDevanagari-Regular.ttf")
@@ -32,6 +35,15 @@ if not BOT_TOKEN:
     raise SystemExit("❌ BOT_TOKEN नहीं मिला। .env (local) या Render Environment में BOT_TOKEN=... सेट करें।")
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+# ---------- 🔐 SUPABASE CONFIG ----------
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise SystemExit("❌ SUPABASE_URL या SUPABASE_KEY नहीं मिला। Supabase dashboard से API → Project URL और anon public key लेकर env में सेट करें।")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Default settings (settings.json से overwrite हो सकते हैं)
 QUESTION_TIME = 45   # हर सवाल के लिए समय (seconds)
@@ -76,60 +88,95 @@ log = logging.getLogger("BPSC-IntelliQuiz-Bot")
 
 
 # -------------------------------------------------
-#   JSON PERSISTENCE HELPERS
+#   QUESTIONS PERSISTENCE (NOW USING SUPABASE)
 # -------------------------------------------------
 def save_questions_to_file():
-    """QUESTIONS को questions.json में save करता है."""
+    """
+    ⚠️ पुराना naam 'to_file' hai, lekin ab ye Supabase DB me questions save karta hai.
+    CURRENT QUESTIONS list ko 'questions' table me sync karega.
+    Simple तरीका: purani rows delete + saari QUESTIONS dubara insert.
+    """
     try:
-        with open(QUESTIONS_FILE, "w", encoding="utf-8") as f:
-            json.dump(QUESTIONS, f, ensure_ascii=False, indent=2)
-        log.info("questions.json update किया गया।")
+        # Purana sab delete
+        supabase.table("questions").delete().neq("id", 0).execute()
+
+        if not QUESTIONS:
+            log.info("Supabase: QUESTIONS खाली है, table clear कर दी गई।")
+            return
+
+        rows = []
+        for q in QUESTIONS:
+            rows.append(
+                {
+                    "id": q.get("id"),
+                    "topic": q.get("topic", "General"),
+                    "question": q.get("question", ""),
+                    "options": q.get("options", []),
+                    "correct": q.get("correct", 0),
+                    "explanation": q.get("explanation", ""),
+                }
+            )
+
+        supabase.table("questions").insert(rows).execute()
+        log.info("Supabase: questions table sync हो गई (rows=%d).", len(rows))
+
     except Exception as e:
-        log.error("questions.json save error: %s", e)
+        log.error("Supabase save_questions_to_file (DB) error: %s", e)
 
 
 def load_questions_from_file():
-    """questions.json से QUESTIONS load करता है, IDs + TOPIC भी सेट करता है."""
+    """
+    ⚠️ पुराना naam 'from_file' hai, lekin ab ye Supabase DB se QUESTIONS load karta hai
+    aur NEXT_Q_ID set karta hai.
+    """
     global QUESTIONS, NEXT_Q_ID
 
-    if not os.path.exists(QUESTIONS_FILE):
-        log.info("questions.json नहीं मिला, नई फाइल बना रहे हैं (खाली list).")
-        save_questions_to_file()
-    else:
-        try:
-            with open(QUESTIONS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    QUESTIONS = data
-                    log.info("questions.json से %d questions load हुए।", len(QUESTIONS))
-                else:
-                    log.warning("questions.json का format list नहीं है, QUESTIONS खाली रखेंगे।")
-                    QUESTIONS = []
-        except Exception as e:
-            log.error("questions.json load error: %s", e)
-            QUESTIONS = []
+    try:
+        res = supabase.table("questions").select("*").order("id", desc=False).execute()
+        rows = res.data or []
+    except Exception as e:
+        log.error("Supabase load_questions_from_file (DB) error: %s", e)
+        rows = []
 
-    # IDs normalize + topic default
+    QUESTIONS = []
     max_id = 0
-    for idx, q in enumerate(QUESTIONS):
-        if "id" not in q:
-            q_id = idx + 1
-            q["id"] = q_id
-        else:
-            q_id = q["id"]
 
-        # topic missing ho to default General
-        if "topic" not in q or not str(q["topic"]).strip():
-            q["topic"] = "General"
+    for row in rows:
+        q_id = row.get("id")
+        topic = row.get("topic") or "General"
+        question = row.get("question") or ""
+        options = row.get("options") or []
+        correct = row.get("correct") or 0
+        explanation = row.get("explanation") or ""
+
+        # options valid list honi chahiye
+        if not isinstance(options, list) or len(options) != 4:
+            continue
 
         try:
-            max_id = max(max_id, int(q_id))
+            q_id_int = int(q_id)
         except Exception:
-            pass
+            continue
 
-    NEXT_Q_ID = max_id + 1 if max_id > 0 else len(QUESTIONS) + 1
+        QUESTIONS.append(
+            {
+                "id": q_id_int,
+                "topic": topic,
+                "question": question,
+                "options": options,
+                "correct": int(correct),
+                "explanation": explanation,
+            }
+        )
+        max_id = max(max_id, q_id_int)
+
+    NEXT_Q_ID = max_id + 1 if max_id > 0 else 1
+    log.info("Supabase se %d questions load hue. NEXT_Q_ID=%s", len(QUESTIONS), NEXT_Q_ID)
 
 
+# -------------------------------------------------
+#   LEADERBOARD / HISTORY JSON (same as before)
+# -------------------------------------------------
 def save_leaderboard_to_file():
     """leaderboard को leaderboard.json में save करता है."""
     try:
@@ -1203,7 +1250,7 @@ def create_questions_pdf(pdf_path):
     except Exception as e:
         log.error("PDF font register error: %s", e)
 
-    c = canvas.Canvas(pdf_path, pagesize=A4)
+    c = canvas.Canvas(pdf_path, pagesizes=A4)
     width, height = A4
     c.setFont(font_name, 11)
 
@@ -1315,7 +1362,6 @@ def main():
 
     while True:
         try:
-            # Har loop me timeout check (question auto-finish)
             timeout_check()
 
             params = {"timeout": POLL_TIMEOUT}
@@ -1324,7 +1370,6 @@ def main():
 
             updates = api_call("getUpdates", params)
             if not updates or not updates.get("ok"):
-                # Thoda sa wait, phir continue — Render par CPU bachane ke लिए
                 time.sleep(1)
                 continue
 
@@ -1373,7 +1418,6 @@ def main():
             log.info("⛔ KeyboardInterrupt मिला, bot बंद कर रहे हैं।")
             break
         except Exception as e:
-            # Render par bot crash na ho, isliye error log karke loop continue
             log.error("Main loop error: %s", e)
             time.sleep(2)
 
@@ -1382,7 +1426,7 @@ def main():
 if __name__ == "__main__":
     log.info("🚀 BPSC IntelliQuiz Bot starting up...")
     load_settings()
-    load_questions_from_file()
+    load_questions_from_file()         # ⬅️ ab ye Supabase se load karega
     load_leaderboard_from_file()
     load_results_history_from_file()
     main()
