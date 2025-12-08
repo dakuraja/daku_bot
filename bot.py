@@ -175,6 +175,17 @@ def load_questions_from_db():
 
     NEXT_Q_ID = max_id + 1 if max_id > 0 else 1
     log.info("Supabase se %d questions load hue. NEXT_Q_ID=%s", len(QUESTIONS), NEXT_Q_ID)
+# ------------ Backward compatibility wrappers -------------
+# Purane file-based function names ko Supabase wale functions se map karte hain
+
+def load_questions_from_file():
+    """Purana function — ab DB se hi load karega"""
+    load_questions_from_db()
+
+
+def save_questions_to_file():
+    """Purana function — ab DB me hi save karega"""
+    save_questions_to_db()
 
 
 # -------------------------------------------------
@@ -1472,4 +1483,5 @@ if __name__ == "__main__":
     load_leaderboard_from_file()
     load_results_history_from_file()
     main()
+
 
