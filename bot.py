@@ -1468,7 +1468,8 @@ def main():
 if __name__ == "__main__":
     log.info("🚀 BPSC IntelliQuiz Bot starting up...")
     load_settings()
-    load_questions_from_file()         # Supabase से load
+    load_questions_from_db()        # Supabase से load
     load_leaderboard_from_file()
     load_results_history_from_file()
     main()
+
