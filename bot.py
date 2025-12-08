@@ -6,98 +6,102 @@ import os
 import json
 from dotenv import load_dotenv
 
+# Supabase Client
+from supabase import create_client, Client
+
+# PDF Support
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-# 🔹 NEW: Supabase client import
-from supabase import create_client, Client
 
-# ---------------- PATH / ENV SETUP ----------------
+# ---------------- PATH SETUP ----------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-QUESTIONS_FILE = os.path.join(BASE_DIR, "questions.json")   # (ab actual file use nahi hogi, sirf naam bacha hai)
+QUESTIONS_FILE = os.path.join(BASE_DIR, "questions.json")
 LEADERBOARD_FILE = os.path.join(BASE_DIR, "leaderboard.json")
 SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
-RESULTS_HISTORY_FILE = os.path.join(BASE_DIR, "results.json")  # time-based leaderboard ke liye
+RESULTS_HISTORY_FILE = os.path.join(BASE_DIR, "results.json")
 
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 PDF_FONT_PATH = os.path.join(FONTS_DIR, "NotoSansDevanagari-Regular.ttf")
 
-# .env local ke लिए, Render par env dashboard se milega
 load_dotenv()
 
-# ---------- 🔐 BOT TOKEN (Render-friendly) ----------
-BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+# ---------------- BOT TOKEN ----------------
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    # Render / local dono ke लिए clear error
-    raise SystemExit("❌ BOT_TOKEN नहीं मिला। .env (local) या Render Environment में BOT_TOKEN=... सेट करें।")
+    raise SystemExit("❌ BOT_TOKEN missing. Set in Render Environment.")
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# ---------- 🔐 SUPABASE CONFIG ----------
+
+# ---------------- SUPABASE CONFIG ----------------
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    raise SystemExit("❌ SUPABASE_URL या SUPABASE_KEY नहीं मिला। Supabase dashboard से API → Project URL और anon public key लेकर env में सेट करें।")
+    raise SystemExit("❌ Supabase credentials missing.")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Default settings (settings.json से overwrite हो सकते हैं)
-QUESTION_TIME = 45   # हर सवाल के लिए समय (seconds)
-POLL_TIMEOUT = 20    # getUpdates long polling timeout (Render के लिए भी safe)
 
-# Negative marking rules
-MARK_CORRECT = 1.0       # सही उत्तर पर इतना + मिलेगा
-MARK_WRONG = -0.33       # गलत उत्तर पर इतना - कटेगा
+# ---------------- DEFAULT SETTINGS ----------------
+QUESTION_TIME = 45
+POLL_TIMEOUT = 20
 
-# अगला question ID (auto increment)
+MARK_CORRECT = 1.0
+MARK_WRONG = -0.33
+
 NEXT_Q_ID = 1
-
-# ---------------- QUESTIONS (IN-MEMORY BANK) ----------------
 QUESTIONS = []
 
-# ---------------- GLOBAL STATE ----------------
-# group_state[chat_id] = {
-#   "order": [question_index_list],
-#   "q_index": current_index_in_order,
-#   "start": question_start_time,
-#   "answers": {user_id: True},
-#   "user_stats": {user_id: {"correct": int, "wrong": int, "attempted": int}},
-#   "msg_id": last_question_message_id,
-#   "topic": str or None,  # current quiz topic
-# }
 group_state = {}
-
-# leaderboard[chat_id][user_id] = {"name": str, "score": float}
 leaderboard = {}
-
-# results_history[chat_id] = [
-#   {"user_id": int, "name": str, "score": float, "ts": int, "topic": str},
-# ]
 results_history = {}
 
-# ---------- LOGGING (Render logs ke लिए useful) ----------
+
+# ---------------- LOGGING ----------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-log = logging.getLogger("BPSC-IntelliQuiz-Bot")
+log = logging.getLogger("BPSC-Quiz-Bot")
 
 
+# ---------------- TIMER BAR HELPERS ----------------
+def build_timer_bar(remaining, total):
+    if total <= 0:
+        total = 1
+    if remaining < 0:
+        remaining = 0
+
+    blocks = 10
+    filled = int((remaining / total) * blocks)
+
+    if filled < 0:
+        filled = 0
+    if filled > blocks:
+        filled = blocks
+
+    return "█" * filled + "░" * (10 - filled), filled
+
+
+def format_timer_line(remaining, total):
+    bar, _ = build_timer_bar(remaining, total)
+    return f"⏳ {bar} {remaining}s"
+
 # -------------------------------------------------
-#   QUESTIONS PERSISTENCE (NOW USING SUPABASE)
+#   QUESTIONS PERSISTENCE (SUPABASE)
 # -------------------------------------------------
-def save_questions_to_file():
+def save_questions_to_db():
     """
-    ⚠️ पुराना naam 'to_file' hai, lekin ab ye Supabase DB me questions save karta hai.
-    CURRENT QUESTIONS list ko 'questions' table me sync karega.
-    Simple तरीका: purani rows delete + saari QUESTIONS dubara insert.
+    QUESTIONS list ko Supabase 'questions' table me sync karta hai.
+    Simple तरीका: purani rows delete + nayi insert.
     """
     try:
-        # Purana sab delete
+        # purana sab delete
         supabase.table("questions").delete().neq("id", 0).execute()
 
         if not QUESTIONS:
@@ -118,15 +122,15 @@ def save_questions_to_file():
             )
 
         supabase.table("questions").insert(rows).execute()
-        log.info("Supabase: questions table sync हो गई (rows=%d).", len(rows))
+        log.info("Supabase: %d questions sync हो गए।", len(rows))
 
     except Exception as e:
-        log.error("Supabase save_questions_to_file (DB) error: %s", e)
+        log.error("Supabase save_questions_to_db error: %s", e)
 
 
-def load_questions_from_file():
+def load_questions_from_db():
     """
-    ⚠️ पुराना naam 'from_file' hai, lekin ab ye Supabase DB se QUESTIONS load karta hai
+    Supabase 'questions' table se QUESTIONS load karta hai
     aur NEXT_Q_ID set karta hai.
     """
     global QUESTIONS, NEXT_Q_ID
@@ -135,7 +139,7 @@ def load_questions_from_file():
         res = supabase.table("questions").select("*").order("id", desc=False).execute()
         rows = res.data or []
     except Exception as e:
-        log.error("Supabase load_questions_from_file (DB) error: %s", e)
+        log.error("Supabase load_questions_from_db error: %s", e)
         rows = []
 
     QUESTIONS = []
@@ -149,7 +153,6 @@ def load_questions_from_file():
         correct = row.get("correct") or 0
         explanation = row.get("explanation") or ""
 
-        # options valid list honi chahiye
         if not isinstance(options, list) or len(options) != 4:
             continue
 
@@ -175,10 +178,9 @@ def load_questions_from_file():
 
 
 # -------------------------------------------------
-#   LEADERBOARD / HISTORY JSON (same as before)
+#   LEADERBOARD / HISTORY JSON (LOCAL FILES)
 # -------------------------------------------------
 def save_leaderboard_to_file():
-    """leaderboard को leaderboard.json में save करता है."""
     try:
         to_save = {}
         for chat_id, users in leaderboard.items():
@@ -194,7 +196,6 @@ def save_leaderboard_to_file():
 
 
 def load_leaderboard_from_file():
-    """leaderboard.json से leaderboard load करता है."""
     global leaderboard
 
     if not os.path.exists(LEADERBOARD_FILE):
@@ -226,20 +227,18 @@ def load_leaderboard_from_file():
 
 
 def save_results_history_to_file():
-    """results_history को results_history.json में save करता है (time-based leaderboard के लिए)."""
     try:
         to_save = {}
         for chat_id, records in results_history.items():
             to_save[str(chat_id)] = records
         with open(RESULTS_HISTORY_FILE, "w", encoding="utf-8") as f:
             json.dump(to_save, f, ensure_ascii=False, indent=2)
-        log.info("results_history.json update किया गया।")
+        log.info("results.json update किया गया।")
     except Exception as e:
-        log.error("results_history.json save error: %s", e)
+        log.error("results.json save error: %s", e)
 
 
 def load_results_history_from_file():
-    """results_history.json से results_history load करता है."""
     global results_history
 
     if not os.path.exists(RESULTS_HISTORY_FILE):
@@ -259,14 +258,13 @@ def load_results_history_from_file():
                     if isinstance(records, list):
                         tmp[chat_id] = records
                 results_history = tmp
-                log.info("results_history.json से data load हुआ।")
+                log.info("results.json से data load हुआ।")
     except Exception as e:
-        log.error("results_history.json load error: %s", e)
+        log.error("results.json load error: %s", e)
 
 
 # ---------------- SETTINGS (QUESTION TIME) ----------------
 def save_settings():
-    """CURRENT QUESTION_TIME को settings.json में save करता है."""
     try:
         data = {"QUESTION_TIME": QUESTION_TIME}
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
@@ -277,7 +275,6 @@ def save_settings():
 
 
 def load_settings():
-    """settings.json से QUESTION_TIME load करता है (न मिले तो default 45)."""
     global QUESTION_TIME
     if not os.path.exists(SETTINGS_FILE):
         log.info("settings.json नहीं मिला, default QUESTION_TIME=%s से नई फाइल बना रहे हैं.", QUESTION_TIME)
@@ -294,8 +291,6 @@ def load_settings():
         log.info("settings.json से QUESTION_TIME=%s load हुआ।", QUESTION_TIME)
     except Exception as e:
         log.error("settings.json load error: %s", e)
-
-
 # ---------------- BASIC TELEGRAM FUNCTIONS ----------------
 def api_call(method, params=None):
     try:
@@ -319,6 +314,19 @@ def send_msg(chat_id, text, reply_markup=None, parse_mode=None):
     return api_call("sendMessage", params)
 
 
+def edit_message_text(chat_id, message_id, text, reply_markup=None, parse_mode=None):
+    params = {"chat_id": chat_id, "message_id": message_id, "text": text}
+    if reply_markup is not None:
+        params["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+    if parse_mode:
+        params["parse_mode"] = parse_mode
+    try:
+        return api_call("editMessageText", params)
+    except Exception as e:
+        log.error("editMessageText error: %s", e)
+        return None
+
+
 def edit_reply_markup(chat_id, message_id, reply_markup=None):
     params = {"chat_id": chat_id, "message_id": message_id}
     if reply_markup is not None:
@@ -327,7 +335,6 @@ def edit_reply_markup(chat_id, message_id, reply_markup=None):
 
 
 def send_document(chat_id, file_path, caption=None):
-    """TXT या PDF document भेजने के लिए helper."""
     try:
         with open(file_path, "rb") as f:
             files = {"document": (os.path.basename(file_path), f)}
@@ -362,7 +369,6 @@ def is_admin(message):
     chat_type = message["chat"]["type"]
     user = message["from"]
 
-    # private chat में सबको allow
     if chat_type == "private":
         return True
 
@@ -378,7 +384,6 @@ def teacher_allowed(message):
 
 
 def find_question_index_by_id(q_id):
-    """दी गई ID वाले question का index ढूँढता है। नहीं मिले तो -1."""
     for idx, q in enumerate(QUESTIONS):
         if q.get("id") == q_id:
             return idx
@@ -409,15 +414,13 @@ def start_command(message):
         "• `/leaderboard_month` – पिछले 30 दिनों का स्कोर\n\n"
         "🔹 *Teacher/Admin commands:*\n"
         "• `/addq Topic | प्रश्न | A | B | C | D | सही (1-4) | व्याख्या`\n"
-        "   उदाहरण: `/addq History | हड़प्पा... | ... | ... | ... | ... | 1 | ...`\n"
         "• `/bulkadd` + कई /addq lines\n"
         "• `/editq ID | नया प्रश्न | A | B | C | D | सही (1-4) | नई व्याख्या`\n"
-        "  (topic पुराना ही रहेगा)\n"
         "• `/removeq ID` – सवाल हटाएँ\n"
         "• `/listq` – questions list (ID + preview)\n"
         "• `/exportq` – questions bank TXT file\n"
         "• `/exportpdf` – questions bank PDF file\n"
-        "• `/settime 60` – हर सवाल का समय 60 सेकंड सेट करें\n"
+        "• `/settime 60` – हर सवाल का समय 60 सेकंड\n"
         "• `/resetboard` – leaderboard साफ़ करें\n\n"
         "_नोट: Students अपना detailed result bot की private chat में देख सकते हैं।_"
     )
@@ -426,17 +429,8 @@ def start_command(message):
 
 # ---------- /quiz args parsing: topic + mode ----------
 def parse_quiz_args(text: str):
-    """
-    /quiz ke baad args:
-    - /quiz                -> topic=None, mode=short
-    - /quiz short          -> topic=None, mode=short
-    - /quiz full           -> topic=None, mode=full
-    - /quiz history        -> topic='history', mode=short
-    - /quiz history full   -> topic='history', mode=full
-    - /quiz full history   -> topic='history', mode=full
-    """
     parts = text.split()
-    args = parts[1:]  # /quiz ke baad ke words
+    args = parts[1:]
 
     allowed_modes = {"short", "long", "full"}
     topic = None
@@ -447,7 +441,7 @@ def parse_quiz_args(text: str):
         if al in allowed_modes:
             mode = al
         elif topic is None:
-            topic = a  # jo diya hai, usi ko store karte hain (case preserve)
+            topic = a
 
     return topic, mode
 
@@ -465,7 +459,6 @@ def start_quiz(message):
         send_msg(chat_id, "अभी कोई सवाल मौजूद नहीं है। पहले /addq या /bulkadd से सवाल जोड़ें।")
         return
 
-    # अगर पहले से कोई quiz active है और questions बचे हैं, तो नया start मत करो
     st_exist = group_state.get(chat_id)
     if st_exist and st_exist.get("q_index", 0) < len(st_exist.get("order", [])):
         send_msg(chat_id, "पहले वाला quiz अभी चल रहा है। उसके ख़त्म होने के बाद नया शुरू करें।")
@@ -474,7 +467,6 @@ def start_quiz(message):
     topic_arg, mode = parse_quiz_args(text)
     total_available = len(QUESTIONS)
 
-    # topic normalize
     topic_filter = None
     if topic_arg:
         topic_filter = topic_arg.strip().lower()
@@ -509,7 +501,11 @@ def start_quiz(message):
     random.shuffle(order)
     order = order[:count]
 
-    mode_label_map = {"short": "Short (5 Q)", "long": "Long (~15 Q)", "full": "Full Mock (~25 Q)"}
+    mode_label_map = {
+        "short": "Short (5 Q)",
+        "long": "Long (~15 Q)",
+        "full": "Full Mock (~25 Q)",
+    }
     mode_label = mode_label_map.get(mode, mode)
 
     group_state[chat_id] = {
@@ -520,100 +516,126 @@ def start_quiz(message):
         "user_stats": {},
         "msg_id": None,
         "topic": topic_label if topic_filter else "Mixed",
+        "last_timer_update": 0,
     }
 
     send_msg(
         chat_id,
-        f"🎯 Quiz शुरू!\n"
-        f"Mode: {mode_label}\n"
-        f"Topic: {topic_label}\n"
-        f"Questions: {len(order)}\n"
-        f"हर सवाल का समय: {QUESTION_TIME} सेकंड\n"
-        f"Marking: सही = {MARK_CORRECT}, गलत = {MARK_WRONG}\n"
-        "आपका detailed result आपको private chat में भेजा जाएगा।"
+        (
+            "🎯 Quiz शुरू!\n"
+            f"Mode: {mode_label}\n"
+            f"Topic: {topic_label}\n"
+            f"Questions: {len(order)}\n"
+            f"हर सवाल का समय: {QUESTION_TIME} सेकंड\n"
+            f"Marking: सही = {MARK_CORRECT}, गलत = {MARK_WRONG}\n"
+            "आपका detailed result आपको private chat में भेजा जाएगा।"
+        ),
     )
 
     send_question(chat_id)
 
+
+def build_question_text(q, q_number, total_q, remaining):
+    header = f"📝 सवाल {q_number}/{total_q} (कुल समय: {QUESTION_TIME} सेकंड)\n"
+    timer_line = format_timer_line(remaining, QUESTION_TIME)
+    body = q["question"]
+    return header + timer_line + "\n\n" + body
 
 
 def send_question(chat_id):
     st = group_state.get(chat_id)
     if not st:
         return
+
     order = st["order"]
     q_idx = st["q_index"]
     if q_idx >= len(order):
         return
+
     q = QUESTIONS[order[q_idx]]
     qid = q.get("id")
-    buttons = [[{"text": opt, "callback_data": f"ans|{qid}|{i}"}] for i, opt in enumerate(q["options"])]
+
+    buttons = [
+        [{"text": opt, "callback_data": f"ans|{qid}|{i}"}]
+        for i, opt in enumerate(q["options"])
+    ]
     markup = {"inline_keyboard": buttons}
-    remaining = QUESTION_TIME
-    bar, filled = build_timer_bar(remaining, QUESTION_TIME)
-    timer_line = f"⏳ {bar} {remaining}s"
-    text = f"{timer_line}
-📝 सवाल {q_idx+1}/{len(order)}
 
-{q['question']}"
+    text = build_question_text(q, q_idx + 1, len(order), QUESTION_TIME)
     res = send_msg(chat_id, text, reply_markup=markup)
+
     if res and res.get("ok"):
-        st["msg_id"] = res["result"]["message_id"]
-    else:
-        st["msg_id"] = None
+        try:
+            st["msg_id"] = res["result"]["message_id"]
+        except Exception:
+            st["msg_id"] = None
+
     st["start"] = time.time()
+    st["last_timer_update"] = 0
     st["answers"] = {}
-    st["last_timer_fill"] = filled
 
 
+def update_timer_for_chat(chat_id, now):
+    st = group_state.get(chat_id)
+    if not st:
+        return
+
+    msg_id = st.get("msg_id")
+    start_time = st.get("start")
+    if not msg_id or not start_time:
+        return
+
+    elapsed = now - start_time
+    remaining = QUESTION_TIME - int(elapsed)
+
+    if remaining <= 0:
+        return
+
+    # update interval logic
+    if remaining > 25:
+        min_delta = 5
+    elif remaining > 10:
+        min_delta = 3
+    else:
+        min_delta = 2
+
+    last_upd = st.get("last_timer_update", 0)
+    if last_upd and (now - last_upd) < min_delta:
+        return
+
+    order = st["order"]
+    q_idx = st["q_index"]
+    if q_idx >= len(order):
+        return
+
+    q = QUESTIONS[order[q_idx]]
+    new_text = build_question_text(q, q_idx + 1, len(order), remaining)
+
+    buttons = [
+        [{"text": opt, "callback_data": f"ans|{q.get('id')}|{i}"}]
+        for i, opt in enumerate(q["options"])
+    ]
+    markup = {"inline_keyboard": buttons}
+
+    edit_message_text(chat_id, msg_id, new_text, reply_markup=markup)
+    st["last_timer_update"] = now
 
 
 def timeout_check():
     now = time.time()
     for chat_id, st in list(group_state.items()):
-        start = st.get("start")
-        if not start:
+        start_time = st.get("start")
+        if not start_time:
             continue
-        elapsed = now - start
-        remaining = int(QUESTION_TIME - elapsed)
-        if remaining <= 0:
+
+        # pehle timer update karo
+        update_timer_for_chat(chat_id, now)
+
+        # phir time over check
+        if now - start_time >= QUESTION_TIME:
             finish_question(chat_id)
-            continue
-        msg_id = st.get("msg_id")
-        if not msg_id:
-            continue
-        # Auto-mode timing
-        if remaining > 25:
-            interval = 3
-        elif remaining > 10:
-            interval = 3
-        else:
-            interval = 2
-        last = st.get("last_tick", 0)
-        if now - last < interval:
-            continue
-        st["last_tick"] = now
-        bar, filled = build_timer_bar(remaining, QUESTION_TIME)
-        if filled == st.get("last_timer_fill"):
-            continue
-        st["last_timer_fill"] = filled
-        order = st["order"]
-        q_idx = st["q_index"]
-        if q_idx >= len(order):
-            continue
-        q = QUESTIONS[order[q_idx]]
-        qid = q.get("id")
-        buttons = [[{"text": opt, "callback_data": f"ans|{qid}|{i}"}] for i, opt in enumerate(q["options"])]
-        markup = {"inline_keyboard": buttons}
-        text = f"⏳ {bar} {remaining}s
-📝 सवाल {q_idx+1}/{len(order)}
 
-{q['question']}"
-        edit_message_text(chat_id, msg_id, text, reply_markup=markup)
-
-    finish_question(chat_id)
-
-
+# ---------------- QUESTION FINISH / SUMMARY ----------------
 def finish_question(chat_id):
     st = group_state.get(chat_id)
     if not st:
@@ -621,12 +643,12 @@ def finish_question(chat_id):
 
     order = st["order"]
     q_idx = st["q_index"]
-
     if q_idx >= len(order):
         return
 
     msg_id = st.get("msg_id")
     if msg_id:
+        # options वाले buttons हटा दो
         edit_reply_markup(chat_id, msg_id)
 
     q = QUESTIONS[order[q_idx]]
@@ -691,7 +713,6 @@ def handle_answer(cb):
 
     q = QUESTIONS[order[q_idx]]
     current_qid = q.get("id")
-
     if qid != current_qid:
         answer_callback(cb_id, "यह सवाल अब active नहीं है (पुराना message हो सकता है)।")
         return
@@ -703,6 +724,7 @@ def handle_answer(cb):
     correct = q["correct"]
     is_right = (selected == correct)
 
+    # quiz session stats
     stats = st.setdefault("user_stats", {})
     u_stats = stats.get(user_id, {"correct": 0, "wrong": 0, "attempted": 0})
     u_stats["attempted"] += 1
@@ -712,6 +734,7 @@ def handle_answer(cb):
         u_stats["wrong"] += 1
     stats[user_id] = u_stats
 
+    # leaderboard (cumulative)
     board = leaderboard.setdefault(chat_id, {})
     name = (user.get("first_name") or "") + " " + (user.get("last_name") or "")
     name = name.strip() or user.get("username") or str(user_id)
@@ -744,10 +767,6 @@ def handle_answer(cb):
 
 # ---------------- SUMMARY + LEADERBOARD ----------------
 def send_user_summaries(chat_id):
-    """
-    Har user ko DM summary bhejta hai + is quiz ka score results_history me store karta hai
-    (time-based leaderboard ke liye).
-    """
     st = group_state.get(chat_id)
     if not st:
         return
@@ -823,12 +842,8 @@ def show_leaderboard(message):
     send_leaderboard(chat_id)
 
 
-# ---------------- TIME-BASED LEADERBOARD HELPERS ----------------
+# ---------------- TIME-BASED LEADERBOARD ----------------
 def build_time_leaderboard(chat_id, days, title):
-    """
-    days = 1 (today), 7 (week), 30 (month)
-    results_history ka use karke filtered leaderboard banata hai.
-    """
     hist = results_history.get(chat_id, [])
     if not hist:
         return f"{title}\n\nअभी तक किसी ने भी क्विज नहीं दिया है।"
@@ -843,6 +858,7 @@ def build_time_leaderboard(chat_id, days, title):
             continue
         if cutoff is not None and ts < cutoff:
             continue
+
         uid = rec.get("user_id")
         name = rec.get("name") or str(uid)
         score = float(rec.get("score", 0.0))
@@ -917,14 +933,12 @@ def handle_addq(message):
         return
 
     if len(parts) == 7:
-        # old style: no topic
         topic = "General"
         question = parts[0]
         options = parts[1:5]
         correct_str = parts[5]
         explanation = parts[6]
     else:
-        # new style: first part = topic
         topic = parts[0] or "General"
         question = parts[1]
         options = parts[2:6]
@@ -1027,7 +1041,9 @@ def handle_bulkadd(message):
             if correct_num not in (1, 2, 3, 4):
                 raise ValueError
         except ValueError:
-            errors.append(f"Line {lineno}: सही विकल्प संख्या 1 से 4 के बीच होनी चाहिए (मिला: {correct_str!r}).")
+            errors.append(
+                f"Line {lineno}: सही विकल्प संख्या 1 से 4 के बीच होनी चाहिए (मिला: {correct_str!r})."
+            )
             continue
 
         entry = {
@@ -1072,7 +1088,6 @@ def handle_removeq(message):
         return
 
     ids_part = parts[1]
-    # comma ko space se replace karke split
     raw_tokens = ids_part.replace(",", " ").split()
     if not raw_tokens:
         send_msg(message["chat"]["id"], "कृपया कम से कम एक ID दें।")
@@ -1103,7 +1118,6 @@ def handle_removeq(message):
     if removed_ids:
         save_questions_to_file()
 
-    # summary message बनाओ
     msg_lines = []
     if removed_ids:
         removed_ids_str = ", ".join(str(x) for x in removed_ids)
@@ -1131,7 +1145,6 @@ def handle_editq(message):
     content = text[len("/editq"):].strip()
     parts = [p.strip() for p in content.split("|")]
 
-    # पुराना format: ID | प्रश्न | A | B | C | D | सही | व्याख्या
     if len(parts) < 8:
         send_msg(
             message["chat"]["id"],
@@ -1272,11 +1285,6 @@ def handle_exportq(message):
 
 # ---------------- PDF EXPORT HELPERS ----------------
 def create_questions_pdf(pdf_path):
-    """
-    QUESTIONS list से simple PDF बनाता है.
-    Hindi support के लिए fonts/NotoSansDevanagari-Regular.ttf use करेगा
-    (अगर file न मिले तो default Helvetica से काम चलाएगा).
-    """
     font_name = "Helvetica"
     try:
         if os.path.exists(PDF_FONT_PATH):
@@ -1285,7 +1293,7 @@ def create_questions_pdf(pdf_path):
     except Exception as e:
         log.error("PDF font register error: %s", e)
 
-    c = canvas.Canvas(pdf_path, pagesizes=A4)
+    c = canvas.Canvas(pdf_path, pagesize=A4)
     width, height = A4
     c.setFont(font_name, 11)
 
@@ -1356,7 +1364,6 @@ def handle_exportpdf(message):
 
 
 def handle_settime(message):
-    """Question का time (seconds) बदलने के लिए: /settime 60"""
     global QUESTION_TIME
 
     if not teacher_allowed(message):
@@ -1461,8 +1468,7 @@ def main():
 if __name__ == "__main__":
     log.info("🚀 BPSC IntelliQuiz Bot starting up...")
     load_settings()
-    load_questions_from_file()         # ⬅️ ab ye Supabase se load karega
+    load_questions_from_file()         # Supabase से load
     load_leaderboard_from_file()
     load_results_history_from_file()
     main()
-
