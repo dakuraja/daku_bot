@@ -536,47 +536,82 @@ def start_quiz(message):
     send_question(chat_id)
 
 
+
 def send_question(chat_id):
     st = group_state.get(chat_id)
     if not st:
         return
-
     order = st["order"]
     q_idx = st["q_index"]
-
     if q_idx >= len(order):
         return
-
     q = QUESTIONS[order[q_idx]]
     qid = q.get("id")
-
-    buttons = [
-        [{"text": opt, "callback_data": f"ans|{qid}|{i}"}]
-        for i, opt in enumerate(q["options"])
-    ]
+    buttons = [[{"text": opt, "callback_data": f"ans|{qid}|{i}"}] for i, opt in enumerate(q["options"])]
     markup = {"inline_keyboard": buttons}
+    remaining = QUESTION_TIME
+    bar, filled = build_timer_bar(remaining, QUESTION_TIME)
+    timer_line = f"⏳ {bar} {remaining}s"
+    text = f"{timer_line}
+📝 सवाल {q_idx+1}/{len(order)}
 
-    text = f"📝 सवाल {q_idx+1}/{len(order)} (⏱ {QUESTION_TIME} सेकंड)\n\n{q['question']}"
+{q['question']}"
     res = send_msg(chat_id, text, reply_markup=markup)
-
     if res and res.get("ok"):
-        try:
-            st["msg_id"] = res["result"]["message_id"]
-        except Exception:
-            st["msg_id"] = None
-
+        st["msg_id"] = res["result"]["message_id"]
+    else:
+        st["msg_id"] = None
     st["start"] = time.time()
     st["answers"] = {}
+    st["last_timer_fill"] = filled
+
+
 
 
 def timeout_check():
     now = time.time()
     for chat_id, st in list(group_state.items()):
-        start_time = st.get("start")
-        if not start_time:
+        start = st.get("start")
+        if not start:
             continue
-        if now - start_time >= QUESTION_TIME:
+        elapsed = now - start
+        remaining = int(QUESTION_TIME - elapsed)
+        if remaining <= 0:
             finish_question(chat_id)
+            continue
+        msg_id = st.get("msg_id")
+        if not msg_id:
+            continue
+        # Auto-mode timing
+        if remaining > 25:
+            interval = 3
+        elif remaining > 10:
+            interval = 3
+        else:
+            interval = 2
+        last = st.get("last_tick", 0)
+        if now - last < interval:
+            continue
+        st["last_tick"] = now
+        bar, filled = build_timer_bar(remaining, QUESTION_TIME)
+        if filled == st.get("last_timer_fill"):
+            continue
+        st["last_timer_fill"] = filled
+        order = st["order"]
+        q_idx = st["q_index"]
+        if q_idx >= len(order):
+            continue
+        q = QUESTIONS[order[q_idx]]
+        qid = q.get("id")
+        buttons = [[{"text": opt, "callback_data": f"ans|{qid}|{i}"}] for i, opt in enumerate(q["options"])]
+        markup = {"inline_keyboard": buttons}
+        text = f"⏳ {bar} {remaining}s
+📝 सवाल {q_idx+1}/{len(order)}
+
+{q['question']}"
+        edit_message_text(chat_id, msg_id, text, reply_markup=markup)
+
+    finish_question(chat_id)
 
 
 def finish_question(chat_id):
@@ -1430,3 +1465,4 @@ if __name__ == "__main__":
     load_leaderboard_from_file()
     load_results_history_from_file()
     main()
+
