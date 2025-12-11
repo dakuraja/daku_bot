@@ -32,6 +32,43 @@ from reportlab.pdfbase.ttfonts import TTFont
 
 # Register Unicode Hindi font
 pdfmetrics.registerFont(TTFont('NotoHindi', 'fonts/NotoSansDevanagari-Regular.ttf'))
+def export_questions_pdf(chat_id):
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+
+    # Register Devanagari font
+    pdfmetrics.registerFont(TTFont('NotoHindi', 'fonts/NotoSansDevanagari-Regular.ttf'))
+
+    style = ParagraphStyle(
+        name="Normal",
+        fontSize=12,
+        leading=15,
+        fontName="NotoHindi"
+    )
+
+    filename = f"/tmp/questions_export.pdf"
+    doc = SimpleDocTemplate(filename, pagesize=letter)
+    story = []
+
+    for q in QUESTIONS:
+        text = f"""
+ID: {q['id']} | Topic: {q['topic']}<br/>
+Q: {q['question']}<br/>
+1. {q['options'][0]}<br/>
+2. {q['options'][1]}<br/>
+3. {q['options'][2]}<br/>
+4. {q['options'][3]}<br/>
+Correct: {q['correct']}<br/>
+Explanation: {q['explanation']}<br/><br/>
+----------------------------------------
+"""
+        story.append(Paragraph(text, style))
+        story.append(Spacer(1, 12))
+
+    doc.build(story)
+    send_document(chat_id, filename, "Here is your PDF export.")
 
 
 # ---------------- BOT TOKEN ----------------
@@ -1794,4 +1831,5 @@ if __name__ == "__main__":
     load_leaderboard_from_file()
     load_results_history_from_file()
     main()
+
 
