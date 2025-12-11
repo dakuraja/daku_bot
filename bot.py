@@ -18,40 +18,6 @@ from reportlab.pdfbase.ttfonts import TTFont
 
 # ---------------- PATH SETUP ----------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# ------------------ PDF FONT DETECTION & REGISTRATION ------------------
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-
-# Try multiple relative locations for the Devanagari TTF included in repo.
-REL_FONT_PATHS = [
-    "hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf",
-    "hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf".replace("hinted/ttf/", "fonts/"),
-    "fonts/NotoSansDevanagari-Regular.ttf",
-    "fonts/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf",
-    "NotoSansDevanagari-Regular.ttf",
-]
-
-PDF_FONT_PATH = None
-for p in REL_FONT_PATHS:
-    candidate = os.path.join(BASE_DIR, p)
-    if os.path.isfile(candidate):
-        PDF_FONT_PATH = candidate
-        break
-
-if not PDF_FONT_PATH:
-    log.error("❌ PDF font not found. Checked paths: %s", [os.path.join(BASE_DIR, p) for p in REL_FONT_PATHS])
-else:
-    try:
-        pdfmetrics.registerFont(TTFont("NotoHindi", PDF_FONT_PATH))
-        log.info("✅ Registered PDF font at %s", PDF_FONT_PATH)
-    except Exception as e:
-        log.error("PDF font register failed: %s", e)
-        PDF_FONT_PATH = None
-
-# ----------------------------------------------------------------------
-
-
 QUESTIONS_FILE = os.path.join(BASE_DIR, "questions.json")
 LEADERBOARD_FILE = os.path.join(BASE_DIR, "leaderboard.json")
 SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
