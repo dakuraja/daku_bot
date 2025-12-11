@@ -27,6 +27,11 @@ FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 PDF_FONT_PATH = os.path.join(FONTS_DIR, "NotoSansDevanagari-Regular.ttf")
 
 load_dotenv()
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+# Register Unicode Hindi font
+pdfmetrics.registerFont(TTFont('NotoHindi', 'fonts/NotoSansDevanagari-Regular.ttf'))
 
 
 # ---------------- BOT TOKEN ----------------
@@ -1789,3 +1794,4 @@ if __name__ == "__main__":
     load_leaderboard_from_file()
     load_results_history_from_file()
     main()
+
