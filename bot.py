@@ -18,6 +18,40 @@ from reportlab.pdfbase.ttfonts import TTFont
 
 # ---------------- PATH SETUP ----------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# ------------------ PDF FONT DETECTION & REGISTRATION ------------------
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+# Try multiple relative locations for the Devanagari TTF included in repo.
+REL_FONT_PATHS = [
+    "hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf",
+    "hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf".replace("hinted/ttf/", "fonts/"),
+    "fonts/NotoSansDevanagari-Regular.ttf",
+    "fonts/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf",
+    "NotoSansDevanagari-Regular.ttf",
+]
+
+PDF_FONT_PATH = None
+for p in REL_FONT_PATHS:
+    candidate = os.path.join(BASE_DIR, p)
+    if os.path.isfile(candidate):
+        PDF_FONT_PATH = candidate
+        break
+
+if not PDF_FONT_PATH:
+    log.error("❌ PDF font not found. Checked paths: %s", [os.path.join(BASE_DIR, p) for p in REL_FONT_PATHS])
+else:
+    try:
+        pdfmetrics.registerFont(TTFont("NotoHindi", PDF_FONT_PATH))
+        log.info("✅ Registered PDF font at %s", PDF_FONT_PATH)
+    except Exception as e:
+        log.error("PDF font register failed: %s", e)
+        PDF_FONT_PATH = None
+
+# ----------------------------------------------------------------------
+
+
 QUESTIONS_FILE = os.path.join(BASE_DIR, "questions.json")
 LEADERBOARD_FILE = os.path.join(BASE_DIR, "leaderboard.json")
 SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
@@ -27,48 +61,6 @@ FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 PDF_FONT_PATH = os.path.join(FONTS_DIR, "NotoSansDevanagari-Regular.ttf")
 
 load_dotenv()
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-
-# Register Unicode Hindi font
-pdfmetrics.registerFont(TTFont('NotoHindi', 'fonts/NotoSansDevanagari-Regular.ttf'))
-def export_questions_pdf(chat_id):
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-    from reportlab.lib.styles import ParagraphStyle
-    from reportlab.lib.pagesizes import letter
-    from reportlab.lib import colors
-
-    # Register Devanagari font
-    pdfmetrics.registerFont(TTFont('NotoHindi', 'fonts/NotoSansDevanagari-Regular.ttf'))
-
-    style = ParagraphStyle(
-        name="Normal",
-        fontSize=12,
-        leading=15,
-        fontName="NotoHindi"
-    )
-
-    filename = f"/tmp/questions_export.pdf"
-    doc = SimpleDocTemplate(filename, pagesize=letter)
-    story = []
-
-    for q in QUESTIONS:
-        text = f"""
-ID: {q['id']} | Topic: {q['topic']}<br/>
-Q: {q['question']}<br/>
-1. {q['options'][0]}<br/>
-2. {q['options'][1]}<br/>
-3. {q['options'][2]}<br/>
-4. {q['options'][3]}<br/>
-Correct: {q['correct']}<br/>
-Explanation: {q['explanation']}<br/><br/>
-----------------------------------------
-"""
-        story.append(Paragraph(text, style))
-        story.append(Spacer(1, 12))
-
-    doc.build(story)
-    send_document(chat_id, filename, "Here is your PDF export.")
 
 
 # ---------------- BOT TOKEN ----------------
@@ -112,7 +104,7 @@ logging.basicConfig(
 log = logging.getLogger("BPSC-Quiz-Bot")
 
 
-# ---------------- UTILS: Timer bar ----------------
+# ---------------- TIMER BAR HELPERS ----------------
 def build_timer_bar(remaining, total):
     if total <= 0:
         total = 1
@@ -139,7 +131,7 @@ def format_timer_line(remaining, total):
 # -------------------------------------------------
 def save_questions_to_db():
     """
-    QUESTIONS list को Supabase 'questions' table मे sync करता है.
+    QUESTIONS list ko Supabase 'questions' table me sync karta hai.
     Simple तरीका: purani rows delete + nayi insert.
     """
     try:
@@ -172,8 +164,8 @@ def save_questions_to_db():
 
 def load_questions_from_db():
     """
-    Supabase 'questions' table से QUESTIONS load करता है
-    और NEXT_Q_ID set करता है.
+    Supabase 'questions' table se QUESTIONS load karta hai
+    aur NEXT_Q_ID set karta hai.
     """
     global QUESTIONS, NEXT_Q_ID
 
@@ -216,7 +208,7 @@ def load_questions_from_db():
         max_id = max(max_id, q_id_int)
 
     NEXT_Q_ID = max_id + 1 if max_id > 0 else 1
-    log.info("Supabase से %d questions load hue. NEXT_Q_ID=%s", len(QUESTIONS), NEXT_Q_ID)
+    log.info("Supabase se %d questions load hue. NEXT_Q_ID=%s", len(QUESTIONS), NEXT_Q_ID)
 # ------------ Backward compatibility wrappers -------------
 # Purane file-based function names ko Supabase wale functions se map karte hain
 
@@ -459,7 +451,7 @@ def start_command(message):
         "• `/quiz full` – Mixed, ~25 सवाल\n"
         "• `/quiz history short` – सिर्फ History (5 सवाल)\n"
         "• `/quiz history full` – सिर्फ History (25 सवाल तक)\n"
-        "• `/quiz exam` – Exam mode (no per-question reveal)\n\n"
+        "• `/quiz polity long` – सिर्फ Polity (~15 सवाल)\n\n"
         "🔹 *Leaderboard commands:*\n"
         "• `/leaderboard` – इस group का overall cumulative स्कोर\n"
         "• `/leaderboard_today` – आज का topic-mix स्कोर\n"
@@ -474,10 +466,6 @@ def start_command(message):
         "• `/exportq` – questions bank TXT file\n"
         "• `/exportpdf` – questions bank PDF file\n"
         "• `/settime 60` – हर सवाल का समय 60 सेकंड\n"
-        "• `/cancelquiz` – चल रहे quiz को cancel करें\n"
-        "• `/pausequiz` – Quiz pause करें\n"
-        "• `/resumequiz` – Quiz resume करें\n"
-        "• `/endexam` – Exam mode को force end करें (admin only)\n"
         "• `/resetboard` – leaderboard साफ़ करें\n\n"
         "_नोट: Students अपना detailed result bot की private chat में देख सकते हैं।_"
     )
@@ -489,7 +477,7 @@ def parse_quiz_args(text: str):
     parts = text.split()
     args = parts[1:]
 
-    allowed_modes = {"short", "long", "full", "exam"}
+    allowed_modes = {"short", "long", "full"}
     topic = None
     mode = "short"
 
@@ -518,7 +506,7 @@ def start_quiz(message):
 
     st_exist = group_state.get(chat_id)
     if st_exist and st_exist.get("q_index", 0) < len(st_exist.get("order", [])):
-        send_msg(chat_id, "पहले वाला quiz अभी चल रहा है। उसके ख़त्म होने के बाद नया शुरू करें या /cancelquiz चलाएँ।")
+        send_msg(chat_id, "पहले वाला quiz अभी चल रहा है। उसके ख़त्म होने के बाद नया शुरू करें।")
         return
 
     topic_arg, mode = parse_quiz_args(text)
@@ -544,7 +532,7 @@ def start_quiz(message):
         indices_all = list(range(total_available))
         topic_label = "Mixed (सभी topics)"
 
-    desired_map = {"short": 5, "long": 15, "full": 25, "exam": 25}
+    desired_map = {"short": 5, "long": 15, "full": 25}
     if mode not in desired_map:
         mode = "short"
     desired = desired_map[mode]
@@ -562,43 +550,9 @@ def start_quiz(message):
         "short": "Short (5 Q)",
         "long": "Long (~15 Q)",
         "full": "Full Mock (~25 Q)",
-        "exam": "Exam Mode"
     }
     mode_label = mode_label_map.get(mode, mode)
 
-    # If exam mode: use overall-timed exam (QUESTION_TIME * count) by default
-    if mode == "exam":
-        total_exam_time = QUESTION_TIME * len(order)
-        group_state[chat_id] = {
-            "order": order,
-            "q_index": 0,
-            "start": time.time(),
-            "answers": {},
-            "user_stats": {},
-            "msg_id": None,
-            "topic": topic_label if topic_filter else "Mixed",
-            "last_timer_update": 0,
-            "mode": "exam",
-            "exam_end_time": time.time() + total_exam_time,
-            "answer_timestamps": {},
-            "answer_locks": {},
-            "attempts": [],
-        }
-        send_msg(
-            chat_id,
-            (
-                "📝 Exam mode शुरू!\n"
-                f"Mode: {mode_label}\n"
-                f"Topic: {topic_label}\n"
-                f"Questions: {len(order)}\n"
-                f"Total Time: {total_exam_time} सेकंड\n"
-                f"हर सवाल का nominal time (for pacing): {QUESTION_TIME} सेकंड\n"
-            ),
-        )
-        send_question(chat_id)
-        return
-
-    # Normal quiz
     group_state[chat_id] = {
         "order": order,
         "q_index": 0,
@@ -608,10 +562,6 @@ def start_quiz(message):
         "msg_id": None,
         "topic": topic_label if topic_filter else "Mixed",
         "last_timer_update": 0,
-        "mode": mode,
-        "answer_timestamps": {},
-        "answer_locks": {},
-        "attempts": [],
     }
 
     send_msg(
@@ -656,13 +606,7 @@ def send_question(chat_id):
     ]
     markup = {"inline_keyboard": buttons}
 
-    # For exam mode we still show per-question timer for pacing but final reveal happens at end
-    remaining = QUESTION_TIME
-    if st.get("mode") == "exam":
-        # remaining is nominal per-question; real exam uses exam_end_time
-        remaining = QUESTION_TIME
-
-    text = build_question_text(q, q_idx + 1, len(order), remaining)
+    text = build_question_text(q, q_idx + 1, len(order), QUESTION_TIME)
     res = send_msg(chat_id, text, reply_markup=markup)
 
     if res and res.get("ok"):
@@ -673,7 +617,6 @@ def send_question(chat_id):
 
     st["start"] = time.time()
     st["last_timer_update"] = 0
-    # reset per-question answers map
     st["answers"] = {}
 
 
@@ -682,22 +625,13 @@ def update_timer_for_chat(chat_id, now):
     if not st:
         return
 
-    # skip if paused
-    if st.get("paused"):
-        return
-
     msg_id = st.get("msg_id")
     start_time = st.get("start")
     if not msg_id or not start_time:
         return
 
-    # For exam mode, remaining is based on per-question pacing OR overall exam_end_time
-    if st.get("mode") == "exam" and st.get("exam_end_time"):
-        remaining = int(st["exam_end_time"] - now)
-        # We don't want to edit message excessively if remaining large; keep interval logic
-    else:
-        elapsed = now - start_time
-        remaining = QUESTION_TIME - int(elapsed)
+    elapsed = now - start_time
+    remaining = QUESTION_TIME - int(elapsed)
 
     if remaining <= 0:
         return
@@ -720,13 +654,7 @@ def update_timer_for_chat(chat_id, now):
         return
 
     q = QUESTIONS[order[q_idx]]
-    # For exam mode, show overall remaining too
-    if st.get("mode") == "exam" and st.get("exam_end_time"):
-        rem_for_display = int(st["exam_end_time"] - now)
-    else:
-        rem_for_display = remaining
-
-    new_text = build_question_text(q, q_idx + 1, len(order), rem_for_display)
+    new_text = build_question_text(q, q_idx + 1, len(order), remaining)
 
     buttons = [
         [{"text": opt, "callback_data": f"ans|{q.get('id')}|{i}"}]
@@ -741,28 +669,6 @@ def update_timer_for_chat(chat_id, now):
 def timeout_check():
     now = time.time()
     for chat_id, st in list(group_state.items()):
-        # skip paused quizzes
-        if st.get("paused"):
-            continue
-
-        # if exam mode overall timer expired -> finalize exam
-        if st.get("mode") == "exam" and st.get("exam_end_time"):
-            if now >= st["exam_end_time"]:
-                # finalize exam immediately
-                try:
-                    # remove last question's buttons if present
-                    msg_id = st.get("msg_id")
-                    if msg_id:
-                        edit_reply_markup(chat_id, msg_id)
-                except Exception:
-                    pass
-                send_msg(chat_id, "⏰ Exam का समय समाप्त हो गया। Finalizing results...")
-                send_user_summaries(chat_id)
-                send_leaderboard(chat_id)
-                group_state.pop(chat_id, None)
-                continue
-
-        # otherwise perform per-question timer updates and per-question timeouts
         start_time = st.get("start")
         if not start_time:
             continue
@@ -770,10 +676,9 @@ def timeout_check():
         # pehle timer update karo
         update_timer_for_chat(chat_id, now)
 
-        # phir time over check (per-question)
+        # phir time over check
         if now - start_time >= QUESTION_TIME:
             finish_question(chat_id)
-
 
 # ---------------- QUESTION FINISH / SUMMARY ----------------
 def finish_question(chat_id):
@@ -794,31 +699,21 @@ def finish_question(chat_id):
     q = QUESTIONS[order[q_idx]]
     correct = q["correct"]
 
-    if st.get("mode") == "exam":
-        # In exam mode do NOT send correct answer/explanation for each question.
-        send_msg(chat_id, f"⏰ प्रश्न {q_idx+1} का समय समाप्त (exam mode)। अगला प्रश्न भेज रहे हैं।")
-    else:
-        summary = (
-            "⏰ समय समाप्त!\n"
-            f"✅ सही उत्तर: {q['options'][correct]}\n\n"
-            f"ℹ️ व्याख्या:\n{q['explanation']}"
-        )
-        send_msg(chat_id, summary)
+    summary = (
+        "⏰ समय समाप्त!\n"
+        f"✅ सही उत्तर: {q['options'][correct]}\n\n"
+        f"ℹ️ व्याख्या:\n{q['explanation']}"
+    )
+    send_msg(chat_id, summary)
 
     st["q_index"] += 1
 
     if st["q_index"] < len(order):
         send_question(chat_id)
     else:
-        if st.get("mode") == "exam":
-            send_msg(chat_id, "🎉 Exam खत्म! अब final summary और leaderboard भेज रहे हैं…")
-            # compute and reveal everything now
-            send_user_summaries(chat_id)
-            send_leaderboard(chat_id)
-        else:
-            send_msg(chat_id, "🎉 Quiz खत्म! नीचे Leaderboard और आपकी summary भेजी जा रही है…")
-            send_user_summaries(chat_id)
-            send_leaderboard(chat_id)
+        send_msg(chat_id, "🎉 Quiz खत्म! नीचे Leaderboard और आपकी summary भेजी जा रही है…")
+        send_user_summaries(chat_id)
+        send_leaderboard(chat_id)
 
 
 # ---------------- ANSWER HANDLING ----------------
@@ -840,189 +735,82 @@ def handle_answer(cb):
         answer_callback(cb_id, "अभी कोई quiz active नहीं है।")
         return
 
-    # Reject if quiz paused
-    if st.get("paused"):
-        answer_callback(cb_id, "Quiz अभी paused है।")
+    if time.time() - st.get("start", 0) > QUESTION_TIME:
+        answer_callback(cb_id, "इस सवाल का समय समाप्त हो चुका है।")
         return
-
-    # Debounce / rate-limit: per-user per-question
-    now = time.time()
-    last_times = st.setdefault("answer_timestamps", {})  # {user_id: last_ts}
-    last_ts = last_times.get(user_id, 0)
-    if now - last_ts < 1.5:   # 1.5s minimum between attempts
-        answer_callback(cb_id, "ध्यान दें: आप बहुत जल्दी जवाब भेज रहे हैं। थोड़ी देर में कोशिश करें।")
-        return
-    # set timestamp immediately to avoid race
-    last_times[user_id] = now
-
-    # Lightweight answer lock for this user on this question (prevents double processing)
-    locks = st.setdefault("answer_locks", {})
-    if locks.get(user_id):
-        answer_callback(cb_id, "आपका पिछला जवाब अभी process हो रहा है।")
-        return
-    locks[user_id] = True
 
     try:
-        if time.time() - st.get("start", 0) > QUESTION_TIME and st.get("mode") != "exam":
-            answer_callback(cb_id, "इस सवाल का समय समाप्त हो चुका है।")
+        parts = data.split("|")
+        if len(parts) != 3 or parts[0] != "ans":
+            answer_callback(cb_id, "Invalid answer.")
             return
+        qid = int(parts[1])
+        selected = int(parts[2])
+    except Exception:
+        answer_callback(cb_id, "Invalid answer format.")
+        return
 
-        try:
-            parts = data.split("|")
-            if len(parts) != 3 or parts[0] != "ans":
-                answer_callback(cb_id, "Invalid answer.")
-                return
-            qid = int(parts[1])
-            selected = int(parts[2])
-        except Exception:
-            answer_callback(cb_id, "Invalid answer format.")
-            return
+    order = st["order"]
+    q_idx = st["q_index"]
+    if q_idx >= len(order):
+        answer_callback(cb_id, "Quiz समाप्त हो चुका है।")
+        return
 
-        order = st["order"]
-        q_idx = st["q_index"]
-        if q_idx >= len(order):
-            answer_callback(cb_id, "Quiz समाप्त हो चुका है।")
-            return
+    q = QUESTIONS[order[q_idx]]
+    current_qid = q.get("id")
+    if qid != current_qid:
+        answer_callback(cb_id, "यह सवाल अब active नहीं है (पुराना message हो सकता है)।")
+        return
 
-        q = QUESTIONS[order[q_idx]]
-        current_qid = q.get("id")
-        if qid != current_qid:
-            answer_callback(cb_id, "यह सवाल अब active नहीं है (पुराना message हो सकता है)।")
-            return
+    if user_id in st["answers"]:
+        answer_callback(cb_id, "आप पहले ही इस सवाल का जवाब दे चुके हैं।")
+        return
 
-        if user_id in st["answers"]:
-            answer_callback(cb_id, "आप पहले ही इस सवाल का जवाब दे चुके हैं।")
-            return
+    correct = q["correct"]
+    is_right = (selected == correct)
 
-        correct = q["correct"]
-        is_right = (selected == correct)
+    # quiz session stats
+    stats = st.setdefault("user_stats", {})
+    u_stats = stats.get(user_id, {"correct": 0, "wrong": 0, "attempted": 0})
+    u_stats["attempted"] += 1
+    if is_right:
+        u_stats["correct"] += 1
+    else:
+        u_stats["wrong"] += 1
+    stats[user_id] = u_stats
 
-        # quiz session stats
-        stats = st.setdefault("user_stats", {})
-        u_stats = stats.get(user_id, {"correct": 0, "wrong": 0, "attempted": 0})
-        u_stats["attempted"] += 1
-        if is_right:
-            u_stats["correct"] += 1
-        else:
-            u_stats["wrong"] += 1
-        stats[user_id] = u_stats
+    # leaderboard (cumulative)
+    board = leaderboard.setdefault(chat_id, {})
+    name = (user.get("first_name") or "") + " " + (user.get("last_name") or "")
+    name = name.strip() or user.get("username") or str(user_id)
 
-        # leaderboard (cumulative) - keep for both exam and normal; if you want exam isolated, guard this.
-        board = leaderboard.setdefault(chat_id, {})
-        name = (user.get("first_name") or "") + " " + (user.get("last_name") or "")
-        name = name.strip() or user.get("username") or str(user_id)
+    prev = board.get(user_id, {"name": name, "score": 0.0})
+    if is_right:
+        prev["score"] += MARK_CORRECT
+    else:
+        prev["score"] += MARK_WRONG
+    prev["name"] = name
+    board[user_id] = prev
 
-        prev = board.get(user_id, {"name": name, "score": 0.0})
-        if is_right:
-            prev["score"] += MARK_CORRECT
-        else:
-            prev["score"] += MARK_WRONG
-        prev["name"] = name
-        board[user_id] = prev
+    save_leaderboard_to_file()
 
-        save_leaderboard_to_file()
+    st["answers"][user_id] = True
 
-        # mark answered for this question to avoid duplicates
-        st["answers"][user_id] = True
+    status_text = "✔ सही" if is_right else "❌ गलत"
+    dm_text = (
+        f"सवाल: {q['question']}\n"
+        f"आपका जवाब: {q['options'][selected]}\n"
+        f"{status_text}\n\n"
+        f"ℹ️ व्याख्या:\n{q['explanation']}"
+    )
+    dm_res = send_msg(user_id, dm_text)
+    if not dm_res or not dm_res.get("ok"):
+        log.info("User %s को DM नहीं भेज पाए (शायद user ने bot को private में start नहीं किया).", user_id)
 
-        # record per-question attempt for analytics
-        attempt = {
-            "run_q_index": q_idx,
-            "question_id": q.get("id"),
-            "user_id": user_id,
-            "selected": selected,
-            "is_correct": is_right,
-            "time_taken": int(time.time() - st.get("start", time.time())),
-            "ts": int(time.time())
-        }
-        st.setdefault("attempts", []).append(attempt)
-
-        # In exam mode do not send explanation DM immediately — store and send later
-        if st.get("mode") == "exam":
-            answer_callback(cb_id, "जवाब दर्ज हुआ (exam).")
-            try:
-                send_msg(user_id, f"✅ आपका उत्तर दर्ज हो गया (Exam).")
-            except Exception:
-                pass
-            return
-
-        # Normal behavior: immediate DM with explanation
-        status_text = "✔ सही" if is_right else "❌ गलत"
-        dm_text = (
-            f"सवाल: {q['question']}\n"
-            f"आपका जवाब: {q['options'][selected]}\n"
-            f"{status_text}\n\n"
-            f"ℹ️ व्याख्या:\n{q['explanation']}"
-        )
-        dm_res = send_msg(user_id, dm_text)
-        if not dm_res or not dm_res.get("ok"):
-            log.info("User %s को DM नहीं भेज पाए (शायद user ने bot को private में start नहीं किया).", user_id)
-
-        answer_callback(cb_id, "जवाब दर्ज किया गया!")
-    finally:
-        # release lock
-        locks.pop(user_id, None)
+    answer_callback(cb_id, "जवाब दर्ज किया गया!")
 
 
 # ---------------- SUMMARY + LEADERBOARD ----------------
-def save_run_to_supabase(chat_id, st, records_to_add):
-    """
-    Optional: persist a quiz_run + per-user quiz_results and per-question attempts to Supabase.
-    Requires the suggested tables (quiz_runs, quiz_results, question_attempts) to exist.
-    """
-    try:
-        run = {
-            "chat_id": chat_id,
-            "run_ts": int(time.time()),
-            "topic": st.get("topic"),
-            "mode": st.get("mode", "short")
-        }
-        res = supabase.table("quiz_runs").insert(run).execute()
-        run_id = None
-        if res and res.data:
-            run_id = res.data[0].get("id")
-    except Exception as e:
-        log.error("Supabase run insert error: %s", e)
-        run_id = None
-
-    if not run_id:
-        return
-
-    # insert aggregated per-user results
-    for rec in records_to_add:
-        try:
-            rec_row = {
-                "run_id": run_id,
-                "user_id": rec["user_id"],
-                "name": rec["name"],
-                "correct": int(rec.get("correct", 0)),
-                "wrong": int(rec.get("wrong", 0)),
-                "attempted": int(rec.get("attempted", 0)),
-                "score": float(rec.get("score", 0)),
-                "ts": rec.get("ts")
-            }
-            supabase.table("quiz_results").insert(rec_row).execute()
-        except Exception as e:
-            log.error("Supabase quiz_results insert error: %s", e)
-
-    # insert per-question attempts if present
-    for att in st.get("attempts", []):
-        try:
-            att_row = {
-                "run_id": run_id,
-                "chat_id": chat_id,
-                "question_id": att.get("question_id"),
-                "user_id": att.get("user_id"),
-                "selected": att.get("selected"),
-                "is_correct": att.get("is_correct"),
-                "time_taken": att.get("time_taken"),
-                "ts": att.get("ts")
-            }
-            supabase.table("question_attempts").insert(att_row).execute()
-        except Exception as e:
-            log.error("Supabase question_attempts insert error: %s", e)
-
-
 def send_user_summaries(chat_id):
     st = group_state.get(chat_id)
     if not st:
@@ -1067,9 +855,6 @@ def send_user_summaries(chat_id):
             {
                 "user_id": user_id,
                 "name": name,
-                "correct": correct,
-                "wrong": wrong,
-                "attempted": attempted,
                 "score": float(quiz_score),
                 "ts": now_ts,
                 "topic": topic_label,
@@ -1080,12 +865,6 @@ def send_user_summaries(chat_id):
         hist = results_history.setdefault(chat_id, [])
         hist.extend(records_to_add)
         save_results_history_to_file()
-
-    # persist run to Supabase (analytics) if configured
-    try:
-        save_run_to_supabase(chat_id, st, records_to_add)
-    except Exception as e:
-        log.error("Error saving run to supabase: %s", e)
 
 
 def send_leaderboard(chat_id):
@@ -1446,7 +1225,7 @@ def handle_editq(message):
         if correct_num not in (1, 2, 3, 4):
             raise ValueError
     except ValueError:
-        send_msg(message["chat"]["id"], "सहीं विकल्प संख्या 1 से 4 के बीच होनी चाहिए।")
+        send_msg(message["chat"]["id"], "सही विकल्प संख्या 1 से 4 के बीच होनी चाहिए।")
         return
 
     q = QUESTIONS[idx]
@@ -1663,91 +1442,6 @@ def handle_settime(message):
     )
 
 
-# --------- Quiz control commands: cancel / pause / resume / endexam ----------
-def handle_cancelquiz(message):
-    chat_id = message["chat"]["id"]
-    if not is_admin(message):
-        send_msg(chat_id, "आपको यह permission नहीं है।")
-        return
-
-    st = group_state.pop(chat_id, None)
-    if not st:
-        send_msg(chat_id, "कोई active quiz नहीं मिला।")
-        return
-
-    send_msg(chat_id, "❌ Quiz cancel कर दिया गया। सभी intermediate states clear कर दिए गए हैं।")
-    # cleanup last message's buttons if present
-    try:
-        msg_id = st.get("msg_id")
-        if msg_id:
-            edit_reply_markup(chat_id, msg_id, reply_markup={})
-    except Exception:
-        pass
-
-
-def handle_pausequiz(message):
-    chat_id = message["chat"]["id"]
-    if not is_admin(message):
-        send_msg(chat_id, "आपको यह permission नहीं है।")
-        return
-
-    st = group_state.get(chat_id)
-    if not st:
-        send_msg(chat_id, "कोई active quiz नहीं मिला।")
-        return
-
-    if st.get("paused"):
-        send_msg(chat_id, "Quiz पहले से ही paused है।")
-        return
-
-    # store elapsed so we can resume remaining time
-    elapsed = int(time.time() - st.get("start", 0))
-    st["paused"] = True
-    st["paused_elapsed"] = elapsed
-    send_msg(chat_id, "⏸ Quiz paused कर दिया गया। resume करने के लिए /resumequiz चलाएँ।")
-
-
-def handle_resumequiz(message):
-    chat_id = message["chat"]["id"]
-    if not is_admin(message):
-        send_msg(chat_id, "आपको यह permission नहीं है।")
-        return
-
-    st = group_state.get(chat_id)
-    if not st or not st.get("paused"):
-        send_msg(chat_id, "कोई paused quiz नहीं मिला।")
-        return
-
-    paused_elapsed = st.get("paused_elapsed", 0)
-    # set new start such that remaining time is preserved
-    st["start"] = time.time() - paused_elapsed
-    st.pop("paused", None)
-    st.pop("paused_elapsed", None)
-    send_msg(chat_id, "▶ Quiz resume कर दिया गया।")
-
-
-def handle_endexam(message):
-    chat_id = message["chat"]["id"]
-    if not is_admin(message):
-        send_msg(chat_id, "आपको यह permission नहीं है।")
-        return
-    st = group_state.get(chat_id)
-    if not st or st.get("mode") != "exam":
-        send_msg(chat_id, "कोई चल रहा exam नहीं मिला।")
-        return
-    # finalize immediately
-    try:
-        msg_id = st.get("msg_id")
-        if msg_id:
-            edit_reply_markup(chat_id, msg_id, reply_markup={})
-    except Exception:
-        pass
-    send_msg(chat_id, "Exam forced end by admin. Finalizing...")
-    send_user_summaries(chat_id)
-    send_leaderboard(chat_id)
-    group_state.pop(chat_id, None)
-
-
 # ---------------- MAIN LOOP (Render-friendly) ----------------
 def main():
     log.info("🔁 Bot started polling (Render-ready long polling)...")
@@ -1803,14 +1497,6 @@ def main():
                         handle_exportpdf(msg)
                     elif text.startswith("/settime"):
                         handle_settime(msg)
-                    elif text.startswith("/cancelquiz"):
-                        handle_cancelquiz(msg)
-                    elif text.startswith("/pausequiz"):
-                        handle_pausequiz(msg)
-                    elif text.startswith("/resumequiz"):
-                        handle_resumequiz(msg)
-                    elif text.startswith("/endexam"):
-                        handle_endexam(msg)
 
                 if "callback_query" in upd:
                     handle_answer(upd["callback_query"])
