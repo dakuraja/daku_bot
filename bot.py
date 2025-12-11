@@ -1296,6 +1296,7 @@ def handle_exportq(message):
 
 # ---------------- PDF EXPORT HELPERS ----------------
 
+
 def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
     font_name = "Helvetica"
     try:
@@ -1317,9 +1318,7 @@ def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
     def draw_line(text):
         nonlocal y
         max_chars = 95
-        text = text.replace("
-", "").replace("
-", " ")
+        text = text.replace("\\r", "").replace("\\n", " ")
         chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars)] or [""]
         for ch in chunks:
             if y <= 40:
@@ -1360,59 +1359,36 @@ def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
 
 
 def handle_exportpdf(message):
-    # Support: "/exportpdf" (export all) or "/exportpdf TopicName" (export only that topic)
-    if not teacher_allowed(message):
-        send_msg(message["chat"]["id"], "आपको यह command चलाने की अनुमति नहीं है।")
-        return
-
-    text = message.get("text", "") or ""
-    parts = text.split(maxsplit=1)
-    topic_arg = None
-    if len(parts) > 1:
-        topic_arg = parts[1].strip()
-
-    if not QUESTIONS:
-        send_msg(message["chat"]["id"], "अभी कोई सवाल नहीं है, PDF export नहीं कर सकते।")
-        return
-
-    if topic_arg:
-        # filter questions for the topic (case-insensitive)
-        topic_questions = [q for q in QUESTIONS if str(q.get("topic","")).strip().lower() == topic_arg.lower()]
-        if not topic_questions:
-            send_msg(message["chat"]["id"], f"No questions found for topic '{topic_arg}'.")
-            return
-        chat_id = message["chat"]["id"]
-        pdf_path = os.path.join(BASE_DIR, f"questions_export_{topic_arg.replace(' ','_')}.pdf")
-        try:
-            create_questions_pdf(pdf_path, topic_questions=topic_questions, topic_label=topic_arg)
-        except Exception as e:
-            log.error("PDF export (topic) बनाते समय error: %s", e)
-            send_msg(chat_id, "❌ PDF file नहीं बना पाए।")
-            return
-        res = send_document(chat_id, pdf_path, caption=f"📄 BPSC IntelliQuiz - Questions Export (PDF) - {topic_arg}")
-        if not res or not res.get("ok"):
-            send_msg(chat_id, "❌ PDF file भेजने में समस्या आई।")
-        else:
-            send_msg(chat_id, f"✅ Questions bank PDF ({topic_arg}) export कर दिया गया है।")
-        return
-
-    # fallback: original behaviour (export all questions)
-    chat_id = message["chat"]["id"]
-    pdf_path = os.path.join(BASE_DIR, "questions_export.pdf")
-
+    # Support: "/exportpdf" or "/exportpdf TopicName"
     try:
+        text = message.get("text", "") or ""
+        parts = text.split(maxsplit=1)
+        topic_arg = None
+        if len(parts) > 1:
+            topic_arg = parts[1].strip()
+
+        if not QUESTIONS:
+            send_msg(message["chat"]["id"], "अभी कोई सवाल नहीं है, PDF export नहीं कर सकते।")
+            return
+
+        # filter questions
+        if topic_arg:
+            topic_questions = [q for q in QUESTIONS if str(q.get("topic","")).strip().lower() == topic_arg.lower()]
+            if not topic_questions:
+                send_msg(message["chat"]["id"], f"No questions found for topic '{topic_arg}'.")
+                return
+            pdf_path = os.path.join(BASE_DIR, f"questions_export_{topic_arg.replace(' ','_')}.pdf")
+            create_questions_pdf(pdf_path, topic_questions=topic_questions, topic_label=topic_arg)
+            send_document(message["chat"]["id"], pdf_path, caption=f"📄 Questions Export - {topic_arg}")
+            return
+
+        # default: export all
+        pdf_path = os.path.join(BASE_DIR, "questions_export.pdf")
         create_questions_pdf(pdf_path)
+        send_document(message["chat"]["id"], pdf_path, caption="📄 Questions Export")
     except Exception as e:
-        log.error("PDF export बनाते समय error: %s", e)
-        send_msg(chat_id, "❌ PDF file नहीं बना पाए।")
-        return
-
-    res = send_document(chat_id, pdf_path, caption="📄 BPSC IntelliQuiz - Questions Export (PDF)")
-    if not res or not res.get("ok"):
-        send_msg(chat_id, "❌ PDF file भेजने में समस्या आई।")
-    else:
-        send_msg(chat_id, "✅ Questions bank PDF के रूप में export कर दिया गया है।")
-
+        log.error("exportpdf error: %s", e)
+        send_msg(message["chat"]["id"], "PDF export करते समय error आया।")
 
 def handle_settime(message):
     global QUESTION_TIME
