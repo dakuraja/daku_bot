@@ -1295,7 +1295,8 @@ def handle_exportq(message):
 
 
 # ---------------- PDF EXPORT HELPERS ----------------
-def create_questions_pdf(pdf_path):
+
+def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
     font_name = "Helvetica"
     try:
         if os.path.exists(PDF_FONT_PATH):
@@ -1316,7 +1317,9 @@ def create_questions_pdf(pdf_path):
     def draw_line(text):
         nonlocal y
         max_chars = 95
-        text = text.replace("\r", "").replace("\n", " ")
+        text = text.replace("
+", "").replace("
+", " ")
         chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars)] or [""]
         for ch in chunks:
             if y <= 40:
@@ -1326,7 +1329,14 @@ def create_questions_pdf(pdf_path):
             c.drawString(left_margin, y, ch)
             y -= line_height
 
-    for q in QUESTIONS:
+    q_source = topic_questions if topic_questions is not None else QUESTIONS
+
+    header = "BPSC IntelliQuiz - Questions Export"
+    if topic_label:
+        header += f" - Topic: {topic_label}"
+    draw_line(header)
+    draw_line("=" * 60)
+    for q in q_source:
         q_id = q.get("id")
         topic = q.get("topic", "General")
         question = q.get("question", "")
@@ -1348,15 +1358,45 @@ def create_questions_pdf(pdf_path):
     c.save()
 
 
+
 def handle_exportpdf(message):
+    # Support: "/exportpdf" (export all) or "/exportpdf TopicName" (export only that topic)
     if not teacher_allowed(message):
         send_msg(message["chat"]["id"], "आपको यह command चलाने की अनुमति नहीं है।")
         return
+
+    text = message.get("text", "") or ""
+    parts = text.split(maxsplit=1)
+    topic_arg = None
+    if len(parts) > 1:
+        topic_arg = parts[1].strip()
 
     if not QUESTIONS:
         send_msg(message["chat"]["id"], "अभी कोई सवाल नहीं है, PDF export नहीं कर सकते।")
         return
 
+    if topic_arg:
+        # filter questions for the topic (case-insensitive)
+        topic_questions = [q for q in QUESTIONS if str(q.get("topic","")).strip().lower() == topic_arg.lower()]
+        if not topic_questions:
+            send_msg(message["chat"]["id"], f"No questions found for topic '{topic_arg}'.")
+            return
+        chat_id = message["chat"]["id"]
+        pdf_path = os.path.join(BASE_DIR, f"questions_export_{topic_arg.replace(' ','_')}.pdf")
+        try:
+            create_questions_pdf(pdf_path, topic_questions=topic_questions, topic_label=topic_arg)
+        except Exception as e:
+            log.error("PDF export (topic) बनाते समय error: %s", e)
+            send_msg(chat_id, "❌ PDF file नहीं बना पाए।")
+            return
+        res = send_document(chat_id, pdf_path, caption=f"📄 BPSC IntelliQuiz - Questions Export (PDF) - {topic_arg}")
+        if not res or not res.get("ok"):
+            send_msg(chat_id, "❌ PDF file भेजने में समस्या आई।")
+        else:
+            send_msg(chat_id, f"✅ Questions bank PDF ({topic_arg}) export कर दिया गया है।")
+        return
+
+    # fallback: original behaviour (export all questions)
     chat_id = message["chat"]["id"]
     pdf_path = os.path.join(BASE_DIR, "questions_export.pdf")
 
@@ -1406,6 +1446,85 @@ def handle_settime(message):
         f"✅ सवाल का समय अब *{QUESTION_TIME} सेकंड* कर दिया गया है।",
         parse_mode="Markdown",
     )
+
+
+
+# ---------------- PRIVATE /test <Topic> (per-user) ----------------
+private_tests = {}  # user_id -> {"questions": [...], "index": 0, "score": 0}
+
+def handle_test(message):
+    chat = message["chat"]
+    chat_id = chat["id"]
+    if chat.get("type") != "private":
+        send_msg(chat_id, "कृपया यह command private chat में चलाएँ.\nUse: /test TopicName (in bot's private chat)")
+        return
+
+    text = message.get("text", "") or ""
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2:
+        send_msg(chat_id, "Usage: /test TopicName\nExample: /test Balwant")
+        return
+    topic_arg = parts[1].strip()
+
+    topic_questions = [q for q in QUESTIONS if str(q.get("topic","")).strip().lower() == topic_arg.lower()]
+    if not topic_questions:
+        send_msg(chat_id, f"No questions found for topic '{topic_arg}'.")
+        return
+
+    # prepare a shallow copy with correct indices adjusted to 1-based for user
+    qlist = []
+    for q in topic_questions:
+        qlist.append(q)
+
+    private_tests[chat_id] = {
+        "topic": topic_arg,
+        "questions": qlist,
+        "index": 0,
+        "score": 0
+    }
+    send_msg(chat_id, f"Starting private test for topic: {topic_arg}\nTotal Q: {len(qlist)}\nReply with 1/2/3/4 for choices.")
+    ask_private_question(chat_id)
+
+def ask_private_question(user_id):
+    st = private_tests.get(user_id)
+    if not st:
+        return
+    idx = st["index"]
+    qlist = st["questions"]
+    if idx >= len(qlist):
+        send_msg(user_id, f"Test finished for topic '{st['topic']}'. Score: {st['score']}/{len(qlist)}")
+        private_tests.pop(user_id, None)
+        return
+    q = qlist[idx]
+    text = f"Q{idx+1}. {q['question']}\n\n1. {q['options'][0]}\n2. {q['options'][1]}\n3. {q['options'][2]}\n4. {q['options'][3]}"
+    send_msg(user_id, text)
+
+def check_private_answer(message):
+    user_id = message["from"]["id"]
+    chat = message["chat"]
+    if chat.get("type") != "private":
+        return  # ignore non-private replies for private tests
+    st = private_tests.get(user_id)
+    if not st:
+        return  # no active test
+    text = message.get("text", "").strip()
+    try:
+        ans = int(text)
+    except Exception:
+        send_msg(user_id, "Please reply with choice number 1-4 only.")
+        return
+    if ans < 1 or ans > 4:
+        send_msg(user_id, "Choice must be 1-4.")
+        return
+    q = st["questions"][st["index"]]
+    correct = q.get("correct", 0) + 1  # stored as 0-based
+    if ans == correct:
+        st["score"] += 1
+        send_msg(user_id, "Correct ✅")
+    else:
+        send_msg(user_id, f"Wrong ❌\nCorrect: {correct}. Explanation: {q.get('explanation','-')}")
+    st["index"] += 1
+    ask_private_question(user_id)
 
 
 # ---------------- MAIN LOOP (Render-friendly) ----------------
@@ -1461,6 +1580,8 @@ def main():
                         handle_exportq(msg)
                     elif text.startswith("/exportpdf"):
                         handle_exportpdf(msg)
+                    elif text.startswith("/test"):
+                        handle_test(msg)
                     elif text.startswith("/settime"):
                         handle_settime(msg)
 
