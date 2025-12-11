@@ -15,6 +15,98 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
+# --- SQLite persistence for questions (added by assistant) ---
+import sqlite3
+from pathlib import Path as _Path
+
+BASE_DIR = _Path(__file__).parent
+DB_PATH = BASE_DIR / "questions.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS questions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        topic TEXT COLLATE NOCASE,
+        question TEXT,
+        option1 TEXT,
+        option2 TEXT,
+        option3 TEXT,
+        option4 TEXT,
+        correct INTEGER,
+        explanation TEXT
+    )
+    """)
+    conn.commit()
+    conn.close()
+
+def db_add_question(topic, question, opts, correct, explanation):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO questions (topic, question, option1, option2, option3, option4, correct, explanation)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (topic, question, opts[0], opts[1], opts[2], opts[3], int(correct), explanation))
+    conn.commit()
+    rowid = cur.lastrowid
+    conn.close()
+    return rowid
+
+def db_get_topics():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT DISTINCT topic FROM questions ORDER BY topic COLLATE NOCASE")
+    rows = [r[0] for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+def db_get_questions_by_topic(topic):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, topic, question, option1, option2, option3, option4, correct, explanation
+        FROM questions WHERE topic = ? COLLATE NOCASE
+        ORDER BY id
+    """, (topic,))
+    rows = cur.fetchall()
+    conn.close()
+    qlist = []
+    for r in rows:
+        qlist.append({
+            "id": r[0],
+            "topic": r[1],
+            "question": r[2],
+            "options": [r[3], r[4], r[5], r[6]],
+            # convert DB correct (1..4) to 0-based for code that expects zero-based
+            "correct": (r[7] - 1) if r[7] is not None else 0,
+            "explanation": r[8] or ""
+        })
+    return qlist
+
+def db_get_all_questions():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT id, topic, question, option1, option2, option3, option4, correct, explanation FROM questions ORDER BY id")
+    rows = cur.fetchall()
+    conn.close()
+    qlist = []
+    for r in rows:
+        qlist.append({
+            "id": r[0],
+            "topic": r[1],
+            "question": r[2],
+            "options": [r[3], r[4], r[5], r[6]],
+            "correct": (r[7] - 1) if r[7] is not None else 0,
+            "explanation": r[8] or ""
+        })
+    return qlist
+
+# initialize DB file
+init_db()
+# --- end SQLite block ---
+
+
 
 # ---------------- PATH SETUP ----------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1582,3 +1674,37 @@ if __name__ == "__main__":
     main()
 
 
+
+# --- Appended DB-backed handlers ---
+
+@bot.message_handler(commands=['listtopics'])
+def handle_listtopics(message):
+    topics = db_get_topics()
+    if not topics:
+        bot.reply_to(message, "कोई topic नहीं मिला. पहले कुछ प्रश्न /addq से डालें.")
+        return
+    text = "Available Topics:\n" + "\n".join(f"- {t}" for t in topics)
+    bot.reply_to(message, text)
+
+
+
+@bot.message_handler(commands=['test'])
+def start_topic_test(message):
+    topic = message.text.replace("/test", "", 1).strip()
+    if not topic:
+        bot.reply_to(message, "Use: /test TopicName")
+        return
+
+    # fetch from DB
+    topic_questions = db_get_questions_by_topic(topic)
+    if not topic_questions:
+        bot.reply_to(message, f"No questions found for topic '{topic}'.")
+        return
+
+    USER_STATE[message.chat.id] = {
+        "topic": topic,
+        "questions": topic_questions,
+        "index": 0,
+        "score": 0
+    }
+    ask_question(message.chat.id)
