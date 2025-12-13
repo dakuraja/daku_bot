@@ -153,6 +153,11 @@ group_state = {}
 leaderboard = {}
 results_history = {}
 
+# ---------------- QUIZ MASTER STATE (ADMIN ONLY) ----------------
+QUIZ_RUNNING = False
+QUIZ_PAUSED = False
+
+
 
 # ---------------- LOGGING ----------------
 logging.basicConfig(
@@ -550,7 +555,52 @@ def parse_quiz_args(text: str):
 
 
 # ---------------- QUIZ START / FLOW ----------------
+
+def quiz_pause(message):
+    global QUIZ_PAUSED, QUIZ_RUNNING
+    chat_id = message["chat"]["id"]
+    if not is_admin(message):
+        send_msg(chat_id, "⛔ केवल Admin quiz pause कर सकता है।")
+        return
+    if not QUIZ_RUNNING:
+        send_msg(chat_id, "❌ कोई quiz चल नहीं रहा है।")
+        return
+    if QUIZ_PAUSED:
+        send_msg(chat_id, "⏸ Quiz पहले से paused है।")
+        return
+    QUIZ_PAUSED = True
+    send_msg(chat_id, "⏸ Quiz Admin द्वारा PAUSE कर दिया गया है।")
+
+
+def quiz_resume(message):
+    global QUIZ_PAUSED
+    chat_id = message["chat"]["id"]
+    if not is_admin(message):
+        send_msg(chat_id, "⛔ केवल Admin quiz resume कर सकता है।")
+        return
+    if not QUIZ_PAUSED:
+        send_msg(chat_id, "▶ Quiz paused नहीं है।")
+        return
+    QUIZ_PAUSED = False
+    send_msg(chat_id, "▶ Quiz फिर से RESUME कर दिया गया है।")
+
+
+def quiz_stop(message):
+    global QUIZ_RUNNING, QUIZ_PAUSED
+    chat_id = message["chat"]["id"]
+    if not is_admin(message):
+        send_msg(chat_id, "⛔ केवल Admin quiz stop कर सकता है।")
+        return
+    if not QUIZ_RUNNING:
+        send_msg(chat_id, "❌ कोई quiz चल नहीं रहा है।")
+        return
+    QUIZ_RUNNING = False
+    QUIZ_PAUSED = False
+    group_state.pop(chat_id, None)
+    send_msg(chat_id, "🛑 Quiz Admin द्वारा STOP कर दिया गया है।")
+
 def start_quiz(message):
+    global QUIZ_RUNNING, QUIZ_PAUSED
     chat_id = message["chat"]["id"]
     text = message.get("text", "") or ""
 
@@ -611,6 +661,9 @@ def start_quiz(message):
     }
     mode_label = mode_label_map.get(mode, mode)
 
+    QUIZ_RUNNING = True
+    QUIZ_PAUSED = False
+
     group_state[chat_id] = {
         "order": order,
         "q_index": 0,
@@ -646,6 +699,8 @@ def build_question_text(q, q_number, total_q, remaining):
 
 
 def send_question(chat_id):
+    if QUIZ_PAUSED or not QUIZ_RUNNING:
+        return
     st = group_state.get(chat_id)
     if not st:
         return
@@ -727,6 +782,8 @@ def update_timer_for_chat(chat_id, now):
 def timeout_check():
     now = time.time()
     for chat_id, st in list(group_state.items()):
+        if QUIZ_PAUSED or not QUIZ_RUNNING:
+            continue
         start_time = st.get("start")
         if not start_time:
             continue
@@ -791,6 +848,10 @@ def handle_answer(cb):
     st = group_state.get(chat_id)
     if not st:
         answer_callback(cb_id, "अभी कोई quiz active नहीं है।")
+        return
+
+    if QUIZ_PAUSED:
+        answer_callback(cb_id, "⏸ Quiz अभी paused है।")
         return
 
     if time.time() - st.get("start", 0) > QUESTION_TIME:
@@ -1624,6 +1685,12 @@ def main():
                         start_command(msg)
                     elif text.startswith("/quiz"):
                         start_quiz(msg)
+                    elif text.startswith("/quiz_pause"):
+                        quiz_pause(msg)
+                    elif text.startswith("/quiz_resume"):
+                        quiz_resume(msg)
+                    elif text.startswith("/quiz_stop"):
+                        quiz_stop(msg)
                     elif text.startswith("/leaderboard_today"):
                         handle_leaderboard_today(msg)
                     elif text.startswith("/leaderboard_week"):
