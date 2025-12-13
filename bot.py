@@ -600,6 +600,7 @@ def quiz_stop(message):
     send_msg(chat_id, "🛑 Quiz Admin द्वारा STOP कर दिया गया है।")
 
 def start_quiz(message):
+    global QUIZ_RUNNING, QUIZ_PAUSED
     chat_id = message["chat"]["id"]
     text = message.get("text", "") or ""
 
@@ -1580,22 +1581,6 @@ def handle_settime(message):
 # ---------------- PRIVATE /test <Topic> (per-user) ----------------
 private_tests = {}  # user_id -> {"questions": [...], "index": 0, "score": 0}
 
-def handle_test_stop(message):
-    chat = message.get("chat", {})
-    user_id = chat.get("id")
-
-    if chat.get("type") != "private":
-        send_msg(chat.get("id"), "❌ यह command सिर्फ private chat में काम करता है।")
-        return
-
-    if user_id not in private_tests:
-        send_msg(user_id, "❌ अभी कोई private test चल नहीं रहा है।")
-        return
-
-    private_tests.pop(user_id, None)
-    send_msg(user_id, "🛑 Private test stop कर दिया गया है।")
-
-
 def handle_test(message):
     chat = message["chat"]
     chat_id = chat["id"]
@@ -1730,9 +1715,7 @@ def main():
                         handle_exportq(msg)
                     elif text.startswith("/exportpdf"):
                         handle_exportpdf(msg)
-                                        elif text.startswith("/test_stop"):
-                        handle_test_stop(msg)
-elif text.startswith("/test"):
+                    elif text.startswith("/test"):
                         handle_test(msg)
                     elif text.startswith("/settime"):
                         handle_settime(msg)
