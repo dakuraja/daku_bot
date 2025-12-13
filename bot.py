@@ -1706,6 +1706,10 @@ def main():
                         quiz_resume(msg)
                     elif text.startswith("/quiz_stop"):
                         quiz_stop(msg)
+                    elif text.startswith("/test_stop"):
+                        handle_test_stop(msg)
+                    elif text.startswith("/test"):
+                        handle_test(msg)
                     elif text.startswith("/leaderboard_today"):
                         handle_leaderboard_today(msg)
                     elif text.startswith("/leaderboard_week"):
@@ -1792,3 +1796,4 @@ def start_topic_test(message):
         "score": 0
     }
     ask_question(message.chat.id)
+
