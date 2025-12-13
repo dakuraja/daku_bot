@@ -1734,9 +1734,9 @@ def main():
                         handle_exportq(msg)
                     elif text.startswith("/exportpdf"):
                         handle_exportpdf(msg)
-                                        elif text.startswith("/test_stop"):
+                    elif text.startswith("/test_stop"):
                         handle_test_stop(msg)
-elif text.startswith("/test"):
+                    elif text.startswith("/test"):
                         handle_test(msg)
                     elif text.startswith("/settime"):
                         handle_settime(msg)
@@ -1796,4 +1796,5 @@ def start_topic_test(message):
         "score": 0
     }
     ask_question(message.chat.id)
+
 
