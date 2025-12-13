@@ -515,6 +515,9 @@ def start_command(message):
         "• `/quiz history short` – सिर्फ History (5 सवाल)\n"
         "• `/quiz history full` – सिर्फ History (25 सवाल तक)\n"
         "• `/quiz polity long` – सिर्फ Polity (~15 सवाल)\n\n"
+        "• `/quiz_pause` – चल रहे quiz को pause करें (Admin only)"
+        "• `/quiz_resume` – paused quiz को resume करें (Admin only)"
+        "• /quiz_stop` – quiz को पूरी तरह stop करें (Admin only)"
         "🔹 *Leaderboard commands:*\n"
         "• `/leaderboard` – इस group का overall cumulative स्कोर\n"
         "• `/leaderboard_today` – आज का topic-mix स्कोर\n"
@@ -1775,3 +1778,4 @@ def start_topic_test(message):
         "score": 0
     }
     ask_question(message.chat.id)
+
