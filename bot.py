@@ -1460,9 +1460,12 @@ def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
     font_bold = "Helvetica-Bold"
 
     try:
-        if os.path.exists(PDF_FONT_PATH):
-            pdfmetrics.registerFont(TTFont("Dev", PDF_FONT_PATH))
-            pdfmetrics.registerFont(TTFont("Dev-Bold", PDF_FONT_PATH))
+        REG_FONT = os.path.join("fonts", "NotoSansDevanagari-Regular.ttf")
+        BOLD_FONT = os.path.join("fonts", "NotoSansDevanagari-Bold.ttf")
+
+        if os.path.exists(REG_FONT) and os.path.exists(BOLD_FONT):
+            pdfmetrics.registerFont(TTFont("Dev", REG_FONT))
+            pdfmetrics.registerFont(TTFont("Dev-Bold", BOLD_FONT))
             font_regular = "Dev"
             font_bold = "Dev-Bold"
     except Exception as e:
@@ -1493,7 +1496,7 @@ def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
 
     def draw_watermark():
         c.saveState()
-        c.setFont(font_bold, 60)
+        c.setFont(font_bold, 40)
         c.setFillGray(0.90)
         c.translate(width / 2, height / 2)
         c.rotate(45)
