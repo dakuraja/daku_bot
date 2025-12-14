@@ -1453,8 +1453,9 @@ def handle_exportq(message):
 
 
 
+
 def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
-    # ---------- FONT SETUP (FINAL FIX: NO BLACK BOX ISSUE) ----------
+    # ---------- FONT SETUP ----------
     font_regular = "Helvetica"
     font_bold = "Helvetica-Bold"
 
@@ -1475,74 +1476,83 @@ def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
     BODY_SIZE = 10
     LEFT_X = 40
     RIGHT_X = width / 2 + 10
-    TOP = height - 50
+    TOP = height - 70
     BOTTOM = 50
     LINE = 14
 
     y = TOP
     col_x = LEFT_X
 
-    def new_page():
+    def draw_header(title_text):
+        nonlocal y
+        c.setFont(font_bold, HEADER_SIZE)
+        c.drawCentredString(width / 2, height - 40, title_text)
+        c.setFont(font_regular, BODY_SIZE)
+        c.drawCentredString(width / 2, height - 58, "-" * 60)
+        y = TOP
+
+    def draw_watermark():
+        c.saveState()
+        c.setFont(font_bold, 40)
+        c.setFillGray(0.90)
+        c.translate(width / 2, height / 2)
+        c.rotate(45)
+        c.drawCentredString(0, 0, "BPSC IntelliQuiz")
+        c.restoreState()
+
+    def new_page(title_text):
         nonlocal y, col_x
         c.showPage()
-        y = TOP
+        draw_watermark()
+        draw_header(title_text)
         col_x = LEFT_X
-        c.setFont(font_regular, BODY_SIZE)
+        y = TOP
 
-    def switch_col():
+    def switch_col(title_text):
         nonlocal y, col_x
         if col_x == LEFT_X:
             col_x = RIGHT_X
             y = TOP
         else:
-            new_page()
+            new_page(title_text)
 
-    def draw(text):
+    def draw(text, title_text):
         nonlocal y, col_x
         max_len = 58
         text = text.replace("\n", " ")
         parts = [text[i:i+max_len] for i in range(0, len(text), max_len)] or [""]
         for p in parts:
             if y <= BOTTOM:
-                switch_col()
+                switch_col(title_text)
             c.drawString(col_x, y, p)
             y -= LINE
 
     questions = topic_questions if topic_questions else QUESTIONS
 
-    # ---------- HEADER ----------
-    c.setFont(font_bold, HEADER_SIZE)
-    title = "BPSC IntelliQuiz"
+    # ---------- FIRST PAGE ----------
+    main_title = "BPSC IntelliQuiz"
     if topic_label:
-        title += f" | Topic: {topic_label}"
-    c.drawCentredString(width/2, y, title)
-    y -= 28
+        main_title += f" | Topic: {topic_label}"
 
-    c.setFont(font_regular, BODY_SIZE)
-    c.drawCentredString(width/2, y, "="*60)
-    y -= 25
+    draw_watermark()
+    draw_header(main_title)
 
     # ---------- QUESTIONS (2 COLUMN) ----------
     answers = []
     for i, q in enumerate(questions, start=1):
-        draw(f"Q{i}. {q['question']}")
+        draw(f"Q{i}. {q['question']}", main_title)
         for idx, opt in enumerate(q['options'], start=1):
-            draw(f"  {idx}. {opt}")
+            draw(f"  {idx}. {opt}", main_title)
         y -= 6
-        answers.append((i, q['correct']+1, q.get('explanation','')))
+        answers.append((i, q['correct'] + 1, q.get('explanation', '')))
 
-    # ---------- ANSWER KEY (SINGLE COLUMN) ----------
-    new_page()
-    c.setFont(font_bold, 16)
-    c.drawCentredString(width/2, y, "Answer Key & Explanations")
-    y -= 25
-    c.setFont(font_regular, BODY_SIZE)
+    # ---------- ANSWER KEY & EXPLANATION (2 COLUMN) ----------
+    answer_title = "BPSC IntelliQuiz | Answer Key & Explanation"
+    new_page(answer_title)
 
     for qno, ans, expl in answers:
-        if y <= BOTTOM:
-            new_page()
-        draw(f"Q{qno}. Correct Answer: {ans}")
-        draw(f"Explanation: {expl}")
+        draw(f"Q{qno}. Correct Answer: {ans}", answer_title)
+        draw(f"Explanation: {expl}", answer_title)
         y -= 10
 
     c.save()
