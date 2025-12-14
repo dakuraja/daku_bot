@@ -15,9 +15,6 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-# --- HTML->PDF (Render-safe) ---
-from weasyprint import HTML, CSS
-
 # --- SQLite persistence for questions (added by assistant) ---
 import sqlite3
 from pathlib import Path as _Path
@@ -1453,69 +1450,64 @@ def handle_exportq(message):
 # ---------------- PDF EXPORT HELPERS ----------------
 
 
-
 def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
-    """
-    HTML -> PDF export using WeasyPrint
-    - Perfect Hindi rendering
-    - Two-column questions
-    - Header: BPSC IntelliQuiz | Topic (bold, large)
-    - Answer Key + Explanations at END
-    """
+    font_name = "Helvetica"
+    try:
+        if os.path.exists(PDF_FONT_PATH):
+            pdfmetrics.registerFont(TTFont("Devanagari", PDF_FONT_PATH))
+            font_name = "Devanagari"
+    except Exception as e:
+        log.error("PDF font register error: %s", e)
 
-    def esc(x):
-        return str(x).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    c = canvas.Canvas(pdf_path, pagesize=A4)
+    width, height = A4
+    c.setFont(font_name, 11)
+
+    left_margin = 40
+    top_margin = height - 40
+    line_height = 14
+    y = top_margin
+
+    def draw_line(text):
+        nonlocal y
+        max_chars = 95
+        text = text.replace("\\r", "").replace("\\n", " ")
+        chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars)] or [""]
+        for ch in chunks:
+            if y <= 40:
+                c.showPage()
+                c.setFont(font_name, 11)
+                y = top_margin
+            c.drawString(left_margin, y, ch)
+            y -= line_height
 
     q_source = topic_questions if topic_questions is not None else QUESTIONS
-    topic_label = topic_label or "All Topics"
 
-    html = f"""<!DOCTYPE html>
-<html lang='hi'>
-<head>
-<meta charset='utf-8'>
-<style>
-@page {{ size: A4; margin: 20mm; }}
-body {{ font-family: 'Noto Sans Devanagari','Mangal',sans-serif; font-size:12px; line-height:1.4; }}
-.header {{ display:flex; justify-content:space-between; font-weight:bold; font-size:22px;
-           border-bottom:1px solid #000; padding-bottom:6px; margin-bottom:14px; }}
-.questions {{ column-count:2; column-gap:20px; }}
-.q {{ break-inside:avoid; margin-bottom:10px; }}
-.q-title {{ font-weight:bold; margin-bottom:4px; }}
-.opt {{ margin-left:12px; font-size:10px; }}
-.section-title {{ page-break-before:always; font-size:16px; font-weight:bold; margin:20px 0 10px; }}
-</style>
-</head>
-<body>
-<div class='header'>
-  <div>BPSC IntelliQuiz</div>
-  <div>{esc(topic_label)}</div>
-</div>
-<div class='questions'>
-"""
+    header = "BPSC IntelliQuiz - Questions Export"
+    if topic_label:
+        header += f" - Topic: {topic_label}"
+    draw_line(header)
+    draw_line("=" * 60)
+    for q in q_source:
+        q_id = q.get("id")
+        topic = q.get("topic", "General")
+        question = q.get("question", "")
+        opts = q.get("options", [])
+        correct_idx = q.get("correct", 0)
+        explanation = q.get("explanation", "")
 
-    answers = []
-    explanations = []
+        draw_line(f"ID: {q_id}  |  Topic: {topic}")
+        draw_line(f"Q: {question}")
+        for idx, opt in enumerate(opts, start=1):
+            draw_line(f"  {idx}. {opt}")
+        if 0 <= correct_idx < len(opts):
+            draw_line(f"Correct: {correct_idx+1} ({opts[correct_idx]})")
+        else:
+            draw_line("Correct: (invalid index)")
+        draw_line(f"Explanation: {explanation}")
+        draw_line("-" * 40)
 
-    for i, q in enumerate(q_source, start=1):
-        html += f"""<div class='q'>
-<div class='q-title'>Q{i}. {esc(q.get('question',''))}</div>
-"""
-        for j, opt in enumerate(q.get("options", []), start=1):
-            html += f"""<div class='opt'>{j}. {esc(opt)}</div>"""
-        html += "</div>"
-
-        answers.append(f"Q{i} – {q.get('correct',0)+1}")
-        explanations.append(f"<b>Q{i}.</b> {esc(q.get('explanation',''))}")
-
-    html += "</div>"
-    html += "<div class='section-title'>Answer Key</div>"
-    html += "<div>" + "&nbsp;&nbsp;".join(answers) + "</div>"
-    html += "<div class='section-title'>Explanations</div>"
-    html += "<div>" + "<br>".join(explanations) + "</div>"
-    html += "</body></html>"
-
-    HTML(string=html).write_pdf(pdf_path)
-
+    c.save()
 
 
 
