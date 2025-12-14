@@ -1451,7 +1451,6 @@ def handle_exportq(message):
 
 
 def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
-    # ---------- FONT ----------
     font_name = "Helvetica"
     try:
         if os.path.exists(PDF_FONT_PATH):
@@ -1462,117 +1461,55 @@ def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
 
     c = canvas.Canvas(pdf_path, pagesize=A4)
     width, height = A4
+    c.setFont(font_name, 11)
 
-    # ---------- LAYOUT ----------
-    margin_x = 40
-    margin_y = 40
-    column_gap = 20
-    column_width = (width - 2 * margin_x - column_gap) / 2
+    left_margin = 40
+    top_margin = height - 40
+    line_height = 14
+    y = top_margin
 
-    left_x = margin_x
-    right_x = margin_x + column_width + column_gap
-
-    y = height - margin_y
-    current_column = "left"
-
-    QUESTION_SIZE = 12
-    OPTION_SIZE = 9
-    HEADER_SIZE = 10
-    FOOTER_SIZE = 9
-
-    def draw_header():
-        c.setFont(font_name, HEADER_SIZE)
-        c.drawString(margin_x, height - 25, "BPSC IntelliQuiz")
-        if topic_label:
-            c.drawRightString(width - margin_x, height - 25, topic_label)
-        c.line(margin_x, height - 30, width - margin_x, height - 30)
-
-    def draw_footer():
-        c.setFont(font_name, FOOTER_SIZE)
-        c.drawCentredString(width / 2, 20, f"Page {c.getPageNumber()}")
-
-    def new_page():
-        nonlocal y, current_column
-        draw_footer()
-        c.showPage()
-        draw_header()
-        y = height - margin_y
-        current_column = "left"
-
-    def switch_column():
-        nonlocal y, current_column
-        if current_column == "left":
-            current_column = "right"
-            y = height - margin_y
-        else:
-            new_page()
-
-    def draw_wrapped_text(x, text, font_size, leading):
+    def draw_line(text):
         nonlocal y
-        c.setFont(font_name, font_size)
-        max_chars = int(column_width / (font_size * 0.6))
-        text = text.replace("\n", " ")
+        max_chars = 95
+        text = text.replace("\\r", "").replace("\\n", " ")
         chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars)] or [""]
-
         for ch in chunks:
-            if y <= margin_y:
-                switch_column()
-            c.drawString(x, y, ch)
-            y -= leading
-
-    # ---------- START ----------
-    draw_header()
+            if y <= 40:
+                c.showPage()
+                c.setFont(font_name, 11)
+                y = top_margin
+            c.drawString(left_margin, y, ch)
+            y -= line_height
 
     q_source = topic_questions if topic_questions is not None else QUESTIONS
-    answers = []
-    explanations = []
 
-    for idx, q in enumerate(q_source, start=1):
-        x = left_x if current_column == "left" else right_x
+    header = "BPSC IntelliQuiz - Questions Export"
+    if topic_label:
+        header += f" - Topic: {topic_label}"
+    draw_line(header)
+    draw_line("=" * 60)
+    for q in q_source:
+        q_id = q.get("id")
+        topic = q.get("topic", "General")
+        question = q.get("question", "")
+        opts = q.get("options", [])
+        correct_idx = q.get("correct", 0)
+        explanation = q.get("explanation", "")
 
-        # rough height check
-        if y < 120:
-            switch_column()
-            x = left_x if current_column == "left" else right_x
+        draw_line(f"ID: {q_id}  |  Topic: {topic}")
+        draw_line(f"Q: {question}")
+        for idx, opt in enumerate(opts, start=1):
+            draw_line(f"  {idx}. {opt}")
+        if 0 <= correct_idx < len(opts):
+            draw_line(f"Correct: {correct_idx+1} ({opts[correct_idx]})")
+        else:
+            draw_line("Correct: (invalid index)")
+        draw_line(f"Explanation: {explanation}")
+        draw_line("-" * 40)
 
-        draw_wrapped_text(x, f"Q{idx}. {q['question']}", QUESTION_SIZE, QUESTION_SIZE + 4)
-
-        for i, opt in enumerate(q.get("options", []), start=1):
-            draw_wrapped_text(x + 10, f"{i}. {opt}", OPTION_SIZE, OPTION_SIZE + 3)
-
-        y -= 6
-
-        answers.append(f"Q{idx} – {q['correct'] + 1}")
-        explanations.append(f"Q{idx}. {q.get('explanation','')}")
-
-    # ---------- ANSWER KEY ----------
-    new_page()
-    c.setFont(font_name, 12)
-    c.drawString(margin_x, y, "Answer Key")
-    y -= 20
-    c.setFont(font_name, 10)
-
-    for line in answers:
-        if y <= margin_y:
-            new_page()
-        c.drawString(margin_x, y, line)
-        y -= 14
-
-    # ---------- EXPLANATIONS ----------
-    new_page()
-    c.setFont(font_name, 12)
-    c.drawString(margin_x, y, "Explanations")
-    y -= 20
-    c.setFont(font_name, 9)
-
-    for line in explanations:
-        if y <= margin_y:
-            new_page()
-        c.drawString(margin_x, y, line)
-        y -= 14
-
-    draw_footer()
     c.save()
+
+
 
 def handle_exportpdf(message):
     # Support: "/exportpdf" or "/exportpdf TopicName"
