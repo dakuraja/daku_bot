@@ -1461,7 +1461,7 @@ def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
 
     c = canvas.Canvas(pdf_path, pagesize=A4)
     width, height = A4
-    c.setFont(font_name, 11)
+    c.setFont(font_name, 25)
 
     left_margin = 40
     top_margin = height - 40
@@ -1483,11 +1483,11 @@ def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
 
     q_source = topic_questions if topic_questions is not None else QUESTIONS
 
-    header = "BPSC IntelliQuiz - Questions Export"
+    header = "BPSC IntelliQuiz | Topic"
     if topic_label:
         header += f" - Topic: {topic_label}"
     draw_line(header)
-    draw_line("=" * 60)
+    draw_line("=" * 80)
     for q in q_source:
         q_id = q.get("id")
         topic = q.get("topic", "General")
