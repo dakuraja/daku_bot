@@ -1493,7 +1493,7 @@ def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
 
     def draw_watermark():
         c.saveState()
-        c.setFont(font_bold, 40)
+        c.setFont(font_bold, 60)
         c.setFillGray(0.90)
         c.translate(width / 2, height / 2)
         c.rotate(45)
