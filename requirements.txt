@@ -3,3 +3,4 @@ python-dotenv
 reportlab
 supabase
 Flask
+weasyprint
