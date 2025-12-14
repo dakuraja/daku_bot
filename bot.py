@@ -1451,6 +1451,7 @@ def handle_exportq(message):
 
 
 
+
 def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
     font_regular = "Helvetica"
     font_bold = "Helvetica-Bold"
@@ -1468,63 +1469,87 @@ def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
     width, height = A4
 
     HEADER_FONT_SIZE = 23
-    BODY_FONT_SIZE = 11
+    BODY_FONT_SIZE = 10
 
-    left_margin = 40
-    top_margin = height - 40
+    LEFT_X = 40
+    RIGHT_X = width / 2 + 10
+    top_margin = height - 50
+    bottom_margin = 50
     line_height = 14
+
     y = top_margin
+    current_x = LEFT_X
+
+    def new_page():
+        nonlocal y, current_x
+        c.showPage()
+        y = top_margin
+        current_x = LEFT_X
+
+    def switch_column():
+        nonlocal y, current_x
+        if current_x == LEFT_X:
+            current_x = RIGHT_X
+            y = top_margin
+        else:
+            new_page()
 
     def draw_line(text):
-        nonlocal y
-        max_chars = 95
+        nonlocal y, current_x
+        max_chars = 60 if current_x == LEFT_X else 60
         text = text.replace("\r", "").replace("\n", " ")
         chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars)] or [""]
         for ch in chunks:
-            if y <= 40:
-                c.showPage()
-                c.setFont(font_regular, BODY_FONT_SIZE)
-                y = top_margin
-            c.drawString(left_margin, y, ch)
+            if y <= bottom_margin:
+                switch_column()
+            c.drawString(current_x, y, ch)
             y -= line_height
 
     q_source = topic_questions if topic_questions is not None else QUESTIONS
 
+    # ---------- HEADER ----------
     header = "BPSC IntelliQuiz"
     if topic_label:
         header += f" | Topic: {topic_label}"
 
     c.setFont(font_bold, HEADER_FONT_SIZE)
-    draw_line(header)
+    c.drawCentredString(width / 2, y, header)
+    y -= 25
 
-    y -= 18
     c.setFont(font_regular, BODY_FONT_SIZE)
-    draw_line("=" * 80)
-    y -= 14
+    c.drawCentredString(width / 2, y, "=" * 60)
+    y -= 25
 
-    for q in q_source:
-        q_id = q.get("id")
-        topic = q.get("topic", "General")
+    # ---------- QUESTIONS (2 COLUMN) ----------
+    c.setFont(font_regular, BODY_FONT_SIZE)
+    answers = []
+
+    for idx, q in enumerate(q_source, start=1):
         question = q.get("question", "")
         opts = q.get("options", [])
         correct_idx = q.get("correct", 0)
         explanation = q.get("explanation", "")
 
-        c.setFont(font_bold, BODY_FONT_SIZE)
-        draw_line(f"ID: {q_id}  |  Topic: {topic}")
+        draw_line(f"Q{idx}. {question}")
+        for i, opt in enumerate(opts, start=1):
+            draw_line(f"  {i}. {opt}")
         y -= 6
 
-        c.setFont(font_regular, BODY_FONT_SIZE)
-        draw_line(f"Q: {question}")
+        answers.append((idx, correct_idx + 1, explanation))
 
-        for idx, opt in enumerate(opts, start=1):
-            draw_line(f"  {idx}. {opt}")
+    # ---------- ANSWER & EXPLANATION (SINGLE COLUMN) ----------
+    new_page()
+    c.setFont(font_bold, 16)
+    c.drawCentredString(width / 2, y, "Answer Key & Explanations")
+    y -= 25
 
-        if 0 <= correct_idx < len(opts):
-            draw_line(f"Correct: {correct_idx+1} ({opts[correct_idx]})")
-
-        draw_line(f"Explanation: {explanation}")
-        draw_line("-" * 40)
+    c.setFont(font_regular, BODY_FONT_SIZE)
+    for qno, ans, expl in answers:
+        if y <= bottom_margin:
+            new_page()
+        draw_line(f"Q{qno}. Correct Answer: {ans}")
+        draw_line(f"Explanation: {expl}")
+        y -= 10
 
     c.save()
 
