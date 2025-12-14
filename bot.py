@@ -1461,7 +1461,7 @@ def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
 
     c = canvas.Canvas(pdf_path, pagesize=A4)
     width, height = A4
-    c.setFont(font_name, 25)
+    c.setFont(font_name, 11)
 
     left_margin = 40
     top_margin = height - 40
@@ -1483,11 +1483,11 @@ def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
 
     q_source = topic_questions if topic_questions is not None else QUESTIONS
 
-    header = "BPSC IntelliQuiz | Topic"
+    header = "BPSC IntelliQuiz - Questions Export"
     if topic_label:
         header += f" - Topic: {topic_label}"
     draw_line(header)
-    draw_line("=" * 80)
+    draw_line("=" * 60)
     for q in q_source:
         q_id = q.get("id")
         topic = q.get("topic", "General")
@@ -1742,36 +1742,3 @@ if __name__ == "__main__":
 
 
 
-# --- Appended DB-backed handlers ---
-
-@bot.message_handler(commands=['listtopics'])
-def handle_listtopics(message):
-    topics = db_get_topics()
-    if not topics:
-        bot.reply_to(message, "कोई topic नहीं मिला. पहले कुछ प्रश्न /addq से डालें.")
-        return
-    text = "Available Topics:\n" + "\n".join(f"- {t}" for t in topics)
-    bot.reply_to(message, text)
-
-
-
-@bot.message_handler(commands=['test'])
-def start_topic_test(message):
-    topic = message.text.replace("/test", "", 1).strip()
-    if not topic:
-        bot.reply_to(message, "Use: /test TopicName")
-        return
-
-    # fetch from DB
-    topic_questions = db_get_questions_by_topic(topic)
-    if not topic_questions:
-        bot.reply_to(message, f"No questions found for topic '{topic}'.")
-        return
-
-    USER_STATE[message.chat.id] = {
-        "topic": topic,
-        "questions": topic_questions,
-        "index": 0,
-        "score": 0
-    }
-    ask_question(message.chat.id)
