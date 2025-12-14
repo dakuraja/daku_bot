@@ -1450,18 +1450,25 @@ def handle_exportq(message):
 # ---------------- PDF EXPORT HELPERS ----------------
 
 
+
 def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
-    font_name = "Helvetica"
+    font_regular = "Helvetica"
+    font_bold = "Helvetica-Bold"
+
     try:
         if os.path.exists(PDF_FONT_PATH):
             pdfmetrics.registerFont(TTFont("Devanagari", PDF_FONT_PATH))
-            font_name = "Devanagari"
+            pdfmetrics.registerFont(TTFont("Devanagari-Bold", PDF_FONT_PATH))
+            font_regular = "Devanagari"
+            font_bold = "Devanagari-Bold"
     except Exception as e:
         log.error("PDF font register error: %s", e)
 
     c = canvas.Canvas(pdf_path, pagesize=A4)
     width, height = A4
-    c.setFont(font_name, 25)
+
+    HEADER_FONT_SIZE = 23
+    BODY_FONT_SIZE = 11
 
     left_margin = 40
     top_margin = height - 40
@@ -1471,23 +1478,30 @@ def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
     def draw_line(text):
         nonlocal y
         max_chars = 95
-        text = text.replace("\\r", "").replace("\\n", " ")
+        text = text.replace("\r", "").replace("\n", " ")
         chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars)] or [""]
         for ch in chunks:
             if y <= 40:
                 c.showPage()
-                c.setFont(font_name, 11)
+                c.setFont(font_regular, BODY_FONT_SIZE)
                 y = top_margin
             c.drawString(left_margin, y, ch)
             y -= line_height
 
     q_source = topic_questions if topic_questions is not None else QUESTIONS
 
-    header = "BPSC IntelliQuiz | Topic"
+    header = "BPSC IntelliQuiz"
     if topic_label:
-        header += f" - Topic: {topic_label}"
+        header += f" | Topic: {topic_label}"
+
+    c.setFont(font_bold, HEADER_FONT_SIZE)
     draw_line(header)
+
+    y -= 18
+    c.setFont(font_regular, BODY_FONT_SIZE)
     draw_line("=" * 80)
+    y -= 14
+
     for q in q_source:
         q_id = q.get("id")
         topic = q.get("topic", "General")
@@ -1496,14 +1510,19 @@ def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
         correct_idx = q.get("correct", 0)
         explanation = q.get("explanation", "")
 
+        c.setFont(font_bold, BODY_FONT_SIZE)
         draw_line(f"ID: {q_id}  |  Topic: {topic}")
+        y -= 6
+
+        c.setFont(font_regular, BODY_FONT_SIZE)
         draw_line(f"Q: {question}")
+
         for idx, opt in enumerate(opts, start=1):
             draw_line(f"  {idx}. {opt}")
+
         if 0 <= correct_idx < len(opts):
             draw_line(f"Correct: {correct_idx+1} ({opts[correct_idx]})")
-        else:
-            draw_line("Correct: (invalid index)")
+
         draw_line(f"Explanation: {explanation}")
         draw_line("-" * 40)
 
