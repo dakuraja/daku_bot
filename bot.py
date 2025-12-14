@@ -1452,103 +1452,97 @@ def handle_exportq(message):
 
 
 
+
 def create_questions_pdf(pdf_path, topic_questions=None, topic_label=None):
+    # ---------- FONT SETUP (FINAL FIX: NO BLACK BOX ISSUE) ----------
     font_regular = "Helvetica"
     font_bold = "Helvetica-Bold"
 
     try:
         if os.path.exists(PDF_FONT_PATH):
-            pdfmetrics.registerFont(TTFont("Devanagari", PDF_FONT_PATH))
-            pdfmetrics.registerFont(TTFont("Devanagari-Bold", PDF_FONT_PATH))
-            font_regular = "Devanagari"
-            font_bold = "Devanagari-Bold"
+            pdfmetrics.registerFont(TTFont("Dev", PDF_FONT_PATH))
+            pdfmetrics.registerFont(TTFont("Dev-Bold", PDF_FONT_PATH))
+            font_regular = "Dev"
+            font_bold = "Dev-Bold"
     except Exception as e:
-        log.error("PDF font register error: %s", e)
+        log.error("PDF font error: %s", e)
 
     c = canvas.Canvas(pdf_path, pagesize=A4)
     width, height = A4
 
-    HEADER_FONT_SIZE = 23
-    BODY_FONT_SIZE = 10
-
+    # ---------- LAYOUT CONFIG ----------
+    HEADER_SIZE = 23
+    BODY_SIZE = 10
     LEFT_X = 40
     RIGHT_X = width / 2 + 10
-    top_margin = height - 50
-    bottom_margin = 50
-    line_height = 14
+    TOP = height - 50
+    BOTTOM = 50
+    LINE = 14
 
-    y = top_margin
-    current_x = LEFT_X
+    y = TOP
+    col_x = LEFT_X
 
     def new_page():
-        nonlocal y, current_x
+        nonlocal y, col_x
         c.showPage()
-        y = top_margin
-        current_x = LEFT_X
+        y = TOP
+        col_x = LEFT_X
+        c.setFont(font_regular, BODY_SIZE)
 
-    def switch_column():
-        nonlocal y, current_x
-        if current_x == LEFT_X:
-            current_x = RIGHT_X
-            y = top_margin
+    def switch_col():
+        nonlocal y, col_x
+        if col_x == LEFT_X:
+            col_x = RIGHT_X
+            y = TOP
         else:
             new_page()
 
-    def draw_line(text):
-        nonlocal y, current_x
-        max_chars = 60 if current_x == LEFT_X else 60
-        text = text.replace("\r", "").replace("\n", " ")
-        chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars)] or [""]
-        for ch in chunks:
-            if y <= bottom_margin:
-                switch_column()
-            c.drawString(current_x, y, ch)
-            y -= line_height
+    def draw(text):
+        nonlocal y, col_x
+        max_len = 58
+        text = text.replace("\n", " ")
+        parts = [text[i:i+max_len] for i in range(0, len(text), max_len)] or [""]
+        for p in parts:
+            if y <= BOTTOM:
+                switch_col()
+            c.drawString(col_x, y, p)
+            y -= LINE
 
-    q_source = topic_questions if topic_questions is not None else QUESTIONS
+    questions = topic_questions if topic_questions else QUESTIONS
 
     # ---------- HEADER ----------
-    header = "BPSC IntelliQuiz"
+    c.setFont(font_bold, HEADER_SIZE)
+    title = "BPSC IntelliQuiz"
     if topic_label:
-        header += f" | Topic: {topic_label}"
+        title += f" | Topic: {topic_label}"
+    c.drawCentredString(width/2, y, title)
+    y -= 28
 
-    c.setFont(font_bold, HEADER_FONT_SIZE)
-    c.drawCentredString(width / 2, y, header)
-    y -= 25
-
-    c.setFont(font_regular, BODY_FONT_SIZE)
-    c.drawCentredString(width / 2, y, "=" * 60)
+    c.setFont(font_regular, BODY_SIZE)
+    c.drawCentredString(width/2, y, "="*60)
     y -= 25
 
     # ---------- QUESTIONS (2 COLUMN) ----------
-    c.setFont(font_regular, BODY_FONT_SIZE)
     answers = []
-
-    for idx, q in enumerate(q_source, start=1):
-        question = q.get("question", "")
-        opts = q.get("options", [])
-        correct_idx = q.get("correct", 0)
-        explanation = q.get("explanation", "")
-
-        draw_line(f"Q{idx}. {question}")
-        for i, opt in enumerate(opts, start=1):
-            draw_line(f"  {i}. {opt}")
+    for i, q in enumerate(questions, start=1):
+        draw(f"Q{i}. {q['question']}")
+        for idx, opt in enumerate(q['options'], start=1):
+            draw(f"  {idx}. {opt}")
         y -= 6
+        answers.append((i, q['correct']+1, q.get('explanation','')))
 
-        answers.append((idx, correct_idx + 1, explanation))
-
-    # ---------- ANSWER & EXPLANATION (SINGLE COLUMN) ----------
+    # ---------- ANSWER KEY (SINGLE COLUMN) ----------
     new_page()
     c.setFont(font_bold, 16)
-    c.drawCentredString(width / 2, y, "Answer Key & Explanations")
+    c.drawCentredString(width/2, y, "Answer Key & Explanations")
     y -= 25
+    c.setFont(font_regular, BODY_SIZE)
 
-    c.setFont(font_regular, BODY_FONT_SIZE)
     for qno, ans, expl in answers:
-        if y <= bottom_margin:
+        if y <= BOTTOM:
             new_page()
-        draw_line(f"Q{qno}. Correct Answer: {ans}")
-        draw_line(f"Explanation: {expl}")
+        draw(f"Q{qno}. Correct Answer: {ans}")
+        draw(f"Explanation: {expl}")
         y -= 10
 
     c.save()
