@@ -141,7 +141,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ---------------- DEFAULT SETTINGS ----------------
 QUESTION_TIME = 45
-POLL_TIMEOUT = 20
+POLL_TIMEOUT = 5
 
 MARK_CORRECT = 1.0
 MARK_WRONG = -0.33
@@ -1826,3 +1826,4 @@ def start_topic_test(message):
         "score": 0
     }
     ask_question(message.chat.id)
+
